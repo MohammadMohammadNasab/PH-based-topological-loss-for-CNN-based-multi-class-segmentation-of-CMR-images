@@ -86,30 +86,31 @@ def compute_betti_numbers(binary_image, max_dim=2):
         max_dim (int): Maximum homology dimension to compute (default=2)
     
     Returns:
-        list: Betti numbers [β₀, β₁, β₂] where:
-              β₀ = number of connected components
-              β₁ = number of holes/tunnels
-              β₂ = number of voids/cavities
+        list: Betti numbers [β₀, β₁, β₂]
     """
+    # Ensure binary image is properly formatted
+    binary_image = binary_image.astype(np.float64)
+    
     # Create a cubical complex from the binary image
+    # GUDHI considers 0s as foreground, so we invert the image
     cubical_complex = gudhi.CubicalComplex(
-        dimensions=[binary_image.shape[0], binary_image.shape[1]],
-        top_dimensional_cells=binary_image.flatten()
+        top_dimensional_cells=1 - binary_image
     )
     
-    # Compute persistence
-    persistence = cubical_complex.persistence()
+    # Compute persistence with homology over Z2 field
+    persistence = cubical_complex.persistence(homology_coeff_field=2)
     
     # Initialize Betti numbers
     betti = [0] * (max_dim + 1)
     
     # Count features that persist
-    for dim, (birth, death) in persistence:
-        if dim <= max_dim and death == float('inf'):
-            betti[dim] += 1
+    if persistence is not None:
+        for dim, (birth, death) in persistence:
+            if dim <= max_dim:
+                if death == float('inf') or (death - birth) > 0.5:  # Only count significant features
+                    betti[dim] += 1
     
     return betti
-
 
 def compute_class_combinations_betti(segmentation, max_dim=2):
     """
@@ -120,9 +121,7 @@ def compute_class_combinations_betti(segmentation, max_dim=2):
         max_dim (int): Maximum homology dimension to compute (default=2)
     
     Returns:
-        dict: Dictionary containing Betti numbers for:
-              - Single classes (1, 2, 3)
-              - Class pairs ((1,2), (1,3), (2,3))
+        dict: Dictionary containing Betti numbers for classes and combinations
     """
     combinations = {
         (1,): None,   # RV
@@ -135,8 +134,12 @@ def compute_class_combinations_betti(segmentation, max_dim=2):
     
     # Compute Betti numbers for single classes
     for class_idx in range(1, 4):
-        mask = (segmentation == class_idx).astype(np.float32)
-        combinations[(class_idx,)] = compute_betti_numbers(mask, max_dim)
+        # Create binary mask and remove small components
+        mask = (segmentation == class_idx)
+        if np.sum(mask) > 0:  # Only compute if class exists in the image
+            combinations[(class_idx,)] = compute_betti_numbers(mask, max_dim)
+        else:
+            combinations[(class_idx,)] = [0] * (max_dim + 1)
     
     # Compute Betti numbers for class pairs
     pairs = [(1, 2), (1, 3), (2, 3)]
@@ -144,8 +147,11 @@ def compute_class_combinations_betti(segmentation, max_dim=2):
         mask = np.logical_or(
             segmentation == pair[0],
             segmentation == pair[1]
-        ).astype(np.float32)
-        combinations[pair] = compute_betti_numbers(mask, max_dim)
+        )
+        if np.sum(mask) > 0:  # Only compute if combination exists
+            combinations[pair] = compute_betti_numbers(mask, max_dim)
+        else:
+            combinations[pair] = [0] * (max_dim + 1)
     
     return combinations
 

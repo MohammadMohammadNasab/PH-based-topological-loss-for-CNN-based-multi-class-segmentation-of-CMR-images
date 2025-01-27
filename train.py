@@ -10,7 +10,7 @@ import torch
 import numpy as np
 from unet import UNet
 from utils.dataloading import get_patient_data, TrainACDCDataset, ValACDCDataset
-from utils.metrics import generalized_dice, hausdorff_distance
+from utils.metrics import generalized_dice, hausdorff_distance, dice_coefficient
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train UNet model for ACDC segmentation')
@@ -156,6 +156,7 @@ def main():
         all_predictions = []
         all_targets = []
         all_hdd = [[] for _ in range(4)]  # For background and 3 classes
+        all_dsc = [[] for _ in range(4)]  # For background and 3 classes
         
         with torch.no_grad():
             for images, masks in val_loader:
@@ -173,14 +174,16 @@ def main():
                 pred_labels = pred_labels.cpu().numpy()
                 masks = masks.cpu().numpy()
                 
-                # Calculate Hausdorff distance for each class in the batch
+                # Calculate Hausdorff distance and Dice coefficient for each class in the batch
                 for class_idx in range(4):  # Including background class
                     for batch_idx in range(pred_labels.shape[0]):
                         pred_binary = (pred_labels[batch_idx] == class_idx).astype(np.float32)
                         true_binary = (masks[batch_idx] == class_idx).astype(np.float32)
                         if np.sum(pred_binary) > 0 and np.sum(true_binary) > 0:  # Only calculate if both masks have the class
                             hdd = hausdorff_distance(pred_binary, true_binary)
+                            dsc = dice_coefficient(pred_binary, true_binary)
                             all_hdd[class_idx].append(hdd)
+                            all_dsc[class_idx].append(dsc)
                 
                 all_predictions.append(pred)
                 all_targets.append(masks)
@@ -197,11 +200,13 @@ def main():
         all_predictions = all_predictions / all_predictions.sum(axis=1, keepdims=True)
         mean_gdice, class_gdice = generalized_dice(all_predictions, all_targets)
         
-        # Calculate mean Hausdorff distance for each class
+        # Calculate mean Hausdorff distance and Dice coefficient for each class
         mean_hdd = [np.mean(class_hdds) if len(class_hdds) > 0 else float('inf') 
                     for class_hdds in all_hdd]
+        mean_dsc = [np.mean(class_dscs) if len(class_dscs) > 0 else 0.0 
+                    for class_dscs in all_dsc]
         
-        return mean_ce_loss, mean_gdice, class_gdice.tolist(), mean_hdd
+        return mean_ce_loss, mean_gdice, class_gdice.tolist(), mean_hdd, mean_dsc
 
     # Training loop with argument values
     best_gdice = 0
@@ -233,7 +238,7 @@ def main():
         
         # Evaluate using argument value for validation steps
         if iteration % args.validation_steps == 0:
-            val_ce_loss, val_gdice, class_gdice, class_hdd = evaluate_model(model, val_loader)
+            val_ce_loss, val_gdice, class_gdice, class_hdd, class_dsc = evaluate_model(model, val_loader)
             print(f'Iteration {iteration}:')
             print(f'Training CE Loss: {loss.item():.4f}')
             print(f'Validation CE Loss: {val_ce_loss:.4f}')
@@ -244,6 +249,9 @@ def main():
             print('Per-class Hausdorff distances:')
             for i, hdd in enumerate(class_hdd):
                 print(f'  Class {i}: {hdd:.4f}')
+            print('Per-class Dice coefficients:')
+            for i, dsc in enumerate(class_dsc):
+                print(f'  Class {i}: {dsc:.4f}')
             
             # Store metrics
             iterations.append(iteration)

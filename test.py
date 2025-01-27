@@ -47,122 +47,122 @@ def save_segmentation_visualization(image, true_mask, pred_mask, save_path):
     plt.savefig(save_path)
     plt.close()
 
-def test_model(model, test_loader, device, results_dir, save_visualizations):
-    """
-    Test the model and calculate metrics.
-    """
+def evaluate_model(model, test_loader, device, criterion):
+    """Similar to training evaluation but with additional metrics"""
     model.eval()
-    dice_scores = []
-    hausdorff_distances = []
-    gdice_scores = []
-    betti_errors = []
-    topological_successes = []
-    
-    # Add lists for Betti numbers
-    pred_betti_numbers = []
-    true_betti_numbers = []
-    
-    os.makedirs(os.path.join(results_dir, 'visualizations'), exist_ok=True)
+    total_ce_loss = 0
+    all_predictions = []
+    all_targets = []
+    all_hdd = [[] for _ in range(4)]  # For background and 3 classes
+    all_dsc = [[] for _ in range(4)]  # For background and 3 classes
+    all_betti = []
     
     with torch.no_grad():
-        for idx, (images, masks) in enumerate(test_loader):
-            images = images.to(device)
-            masks = masks.to(device)
-            
-            # Forward pass
+        for images, masks in test_loader:
+            images, masks = images.to(device), masks.to(device)
             outputs = model(images)
-            predictions = torch.softmax(outputs, dim=1)
-            pred_masks = torch.argmax(predictions, dim=1)
             
-            # Convert to numpy for metric calculation
-            pred_np = pred_masks.cpu().numpy()
-            true_np = masks.cpu().numpy()
+            # Calculate Cross Entropy Loss
+            ce_loss = criterion(outputs, masks)
+            total_ce_loss += ce_loss.item()
             
-            # Calculate metrics for each image in batch
-            for i in range(images.shape[0]):
-                # Calculate Dice score for each class
-                for class_idx in range(1, 4):  # Exclude background
-                    pred_class = (pred_np[i] == class_idx)
-                    true_class = (true_np[i] == class_idx)
-                    
-                    if true_class.sum() > 0:  # Only calculate if class exists in ground truth
-                        dice = dice_coefficient(pred_class, true_class)
-                        hd = hausdorff_distance(pred_class, true_class)
-                        
-                        dice_scores.append(dice)
-                        hausdorff_distances.append(hd)
-                
-                # Calculate Generalized Dice Score
-                pred_one_hot = torch.nn.functional.one_hot(pred_masks[i], 4).float()
-                true_one_hot = torch.nn.functional.one_hot(masks[i], 4).float()
-                gdice = generalized_dice(
-                    pred_one_hot.unsqueeze(0).permute(0, 3, 1, 2),
-                    true_one_hot.unsqueeze(0).permute(0, 3, 1, 2)
-                )
-                gdice_scores.append(gdice)
-                
-                # Compute Betti numbers for all class combinations
-                pred_betti = compute_class_combinations_betti(pred_np[i])
-                true_betti = compute_class_combinations_betti(true_np[i])
-                
-                pred_betti_numbers.append(pred_betti)
-                true_betti_numbers.append(true_betti)
-                
-                # Calculate Betti error and TS for each combination
-                for combo in pred_betti.keys():
-                    pred_combo_betti = pred_betti[combo][:2]  # Only β₀ and β₁
-                    true_combo_betti = true_betti[combo][:2]  # Only β₀ and β₁
-                    
-                    be = betti_error(pred_combo_betti, true_combo_betti)
-                    ts = topological_success(be)
-                    
-                    betti_errors.append(be)
-                    topological_successes.append(ts)
-                
-                # Save visualization
-                if save_visualizations:
-                    save_path = os.path.join(results_dir, 'visualizations', f'sample_{idx}_{i}.png')
-                    save_segmentation_visualization(
-                        images[i].cpu().numpy(),
-                        true_np[i],
-                        pred_np[i],
-                        save_path
-                    )
+            # Convert predictions
+            pred_probs = torch.softmax(outputs, dim=1)  # Shape: (B, C, H, W)
+            pred_labels = torch.argmax(pred_probs, dim=1)  # Shape: (B, H, W)
+            
+            # Convert to numpy
+            pred_probs_np = pred_probs.cpu().numpy()  # Shape: (B, C, H, W)
+            pred_labels_np = pred_labels.cpu().numpy()  # Shape: (B, H, W)
+            masks_np = masks.cpu().numpy()  # Shape: (B, H, W)
+            
+            # Store for batch metrics
+            all_predictions.append(pred_probs_np)  # Storing probabilities for gDSC
+            all_targets.append(masks_np)
+            
+            # Calculate per-class Hausdorff distance and Dice coefficient using pred_labels_np
+            for class_idx in range(4):
+                for batch_idx in range(pred_labels_np.shape[0]):
+                    pred_binary = (pred_labels_np[batch_idx] == class_idx)
+                    true_binary = (masks_np[batch_idx] == class_idx)
+                    if np.sum(pred_binary) > 0 and np.sum(true_binary) > 0:
+                        hdd = hausdorff_distance(pred_binary, true_binary)
+                        dsc = dice_coefficient(pred_binary, true_binary)
+                        all_hdd[class_idx].append(hdd)
+                        all_dsc[class_idx].append(dsc)
+            
+            # Calculate Betti numbers using pred_labels_np
+            for i in range(len(masks_np)):
+                pred_betti = compute_class_combinations_betti(pred_labels_np[i])
+                true_betti = compute_class_combinations_betti(masks_np[i])
+                all_betti.append((pred_betti, true_betti))
     
-    # Calculate final metrics
+    # Calculate mean metrics
+    mean_ce_loss = total_ce_loss / len(test_loader)
+    
+    # Concatenate predictions and targets
+    all_predictions = np.concatenate(all_predictions, axis=0)  # Shape: (N, C, H, W)
+    all_targets = np.concatenate(all_targets, axis=0)  # Shape: (N, H, W)
+    
+    # Calculate generalized dice score with probability predictions
+    mean_gdice, class_gdice = generalized_dice(all_predictions, all_targets)
+    
+    # Calculate mean Hausdorff distance and Dice coefficient per class
+    mean_hdd = [np.mean(class_hdds) if len(class_hdds) > 0 else float('inf') 
+                for class_hdds in all_hdd]
+    mean_dsc = [np.mean(class_dscs) if len(class_dscs) > 0 else 0.0 
+                for class_dscs in all_dsc]
+    
+    # Calculate Betti metrics
+    betti_errors = []
+    topological_successes = []
+    for pred_betti, true_betti in all_betti:
+        for combo in pred_betti.keys():
+            pred_combo_betti = pred_betti[combo][:2]
+            true_combo_betti = true_betti[combo][:2]
+            be = betti_error(pred_combo_betti, true_combo_betti)
+            ts = topological_success(be)
+            betti_errors.append(be)
+            topological_successes.append(ts)
+    
     results = {
-        'mean_dice': np.mean(dice_scores),
-        'std_dice': np.std(dice_scores),
-        'mean_hausdorff': np.mean(hausdorff_distances),
-        'std_hausdorff': np.std(hausdorff_distances),
-        'mean_gdice': np.mean(gdice_scores),
-        'std_gdice': np.std(gdice_scores),
+        'ce_loss': mean_ce_loss,
+        'mean_gdice': mean_gdice,
+        'class_gdice': class_gdice.tolist(),
+        'mean_hdd': mean_hdd,
+        'mean_dsc': mean_dsc,
         'mean_betti_error': np.mean(betti_errors),
         'std_betti_error': np.std(betti_errors),
         'topological_success_rate': np.mean(topological_successes),
-        'betti_numbers': {
-            'predictions': pred_betti_numbers,
-            'ground_truth': true_betti_numbers
-        }
     }
     
-    # Save detailed Betti numbers
+    return results
+
+def test_model(model, test_loader, device, results_dir, save_visualizations):
+    """Simplified test_model using evaluate_model"""
+    criterion = torch.nn.CrossEntropyLoss()
+    results = evaluate_model(model, test_loader, device, criterion)
+    
+    # Save visualizations if requested
+    if save_visualizations:
+        os.makedirs(os.path.join(results_dir, 'visualizations'), exist_ok=True)
+        with torch.no_grad():
+            for idx, (images, masks) in enumerate(test_loader):
+                images = images.to(device)
+                outputs = model(images)
+                pred_masks = torch.argmax(torch.softmax(outputs, dim=1), dim=1)
+                
+                for i in range(images.shape[0]):
+                    save_path = os.path.join(results_dir, 'visualizations', f'sample_{idx}_{i}.png')
+                    save_segmentation_visualization(
+                        images[i].cpu().numpy(),
+                        masks[i].cpu().numpy(),
+                        pred_masks[i].cpu().numpy(),
+                        save_path
+                    )
+    
+    # Save Betti numbers analysis
     betti_file = os.path.join(results_dir, 'betti_numbers.txt')
     with open(betti_file, 'w') as f:
-        f.write("Betti Numbers Analysis\n")
-        f.write("=====================\n\n")
-        
-        for idx, (pred_betti, true_betti) in enumerate(zip(pred_betti_numbers, true_betti_numbers)):
-            f.write(f"\nSample {idx}:\n")
-            
-            for combo in pred_betti.keys():
-                combo_name = f"Class {combo[0]}" if len(combo) == 1 else f"Classes {combo}"
-                f.write(f"\n{combo_name}:\n")
-                f.write(f"Predicted: {pred_betti[combo][:2]}\n")
-                f.write(f"True: {true_betti[combo][:2]}\n")
-            
-            f.write("\n" + "-"*50 + "\n")
-        
         # Write summary statistics
         f.write("\nSummary Statistics:\n")
         f.write(f"Mean Betti Error: {results['mean_betti_error']:.4f}\n")
