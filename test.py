@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 from unet import UNet
 from utils.metrics import generalized_dice, dice_coefficient, hausdorff_distance
-from utils.dataloading import get_patient_data, TrainACDCDataset
+from utils.dataloading import get_patient_data, ValACDCDataset
 from utils.metrics import betti_error, topological_success
 from utils.metrics import compute_class_combinations_betti
 
@@ -176,8 +176,8 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # Load test data
-    test_data_dict = get_patient_data(args.test_dir)
-    test_dataset = TrainACDCDataset(test_data_dict)
+    test_data_dict, test_image_paths, test_lbl_paths = get_patient_data(args.test_dir)
+    test_dataset = ValACDCDataset(test_image_paths, test_lbl_paths)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
     
     # Load model
