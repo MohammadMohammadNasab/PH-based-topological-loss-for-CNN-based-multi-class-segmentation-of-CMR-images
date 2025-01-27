@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from unet import UNet
 from utils.metrics import generalized_dice, dice_coefficient, hausdorff_distance
 from utils.dataloading import get_patient_data, ValACDCDataset
-from utils.metrics import betti_error, topological_success
+from utils.metrics import betti_error, topological_success, compute_percentiles
 from utils.metrics import compute_class_combinations_betti
 
 def parse_args():
@@ -124,6 +124,16 @@ def evaluate_model(model, test_loader, device, criterion):
             betti_errors.append(be)
             topological_successes.append(ts)
     
+    # Calculate percentiles for HDD and DSC
+    hdd_percentiles = compute_percentiles([h for sublist in all_hdd for h in sublist], [25, 50, 75])
+    dsc_percentiles = compute_percentiles([d for sublist in all_dsc for d in sublist], [25, 50, 75])
+    
+    # Calculate percentiles for gDSC
+    gdsc_percentiles = compute_percentiles([gd for gd in class_gdice], [25, 50, 75])
+    
+    # Calculate percentiles for Betti Error
+    betti_percentiles = compute_percentiles(betti_errors, [98, 99, 100])
+    
     results = {
         'ce_loss': mean_ce_loss,
         'mean_gdice': mean_gdice,
@@ -133,6 +143,10 @@ def evaluate_model(model, test_loader, device, criterion):
         'mean_betti_error': np.mean(betti_errors),
         'std_betti_error': np.std(betti_errors),
         'topological_success_rate': np.mean(topological_successes),
+        'hdd_percentiles': hdd_percentiles.tolist(),
+        'dsc_percentiles': dsc_percentiles.tolist(),
+        'gdsc_percentiles': gdsc_percentiles.tolist(),
+        'betti_percentiles': betti_percentiles.tolist(),
     }
     
     return results

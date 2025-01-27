@@ -155,6 +155,9 @@ def compute_class_combinations_betti(segmentation, max_dim=2):
     
     return combinations
 
+def compute_percentiles(metric_list, percentiles=[25, 50, 75, 98, 99, 100]):
+    return np.percentile(metric_list, percentiles)
+
 # Example Usage
 def example_metrics():
     # Example binary segmentations for 3 classes
