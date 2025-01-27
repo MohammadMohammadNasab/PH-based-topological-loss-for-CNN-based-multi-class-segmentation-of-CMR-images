@@ -84,11 +84,12 @@ def evaluate_model(model, test_loader, device, criterion):
                 for batch_idx in range(pred_labels_np.shape[0]):
                     pred_binary = (pred_labels_np[batch_idx] == class_idx)
                     true_binary = (masks_np[batch_idx] == class_idx)
-                    if np.sum(pred_binary) > 0 and np.sum(true_binary) > 0:
-                        hdd = hausdorff_distance(pred_binary, true_binary)
-                        dsc = dice_coefficient(pred_binary, true_binary)
-                        all_hdd[class_idx].append(hdd)
-                        all_dsc[class_idx].append(dsc)
+                    
+                    # Use default behavior from metric functions
+                    hdd = hausdorff_distance(pred_binary, true_binary)
+                    dsc = dice_coefficient(pred_binary, true_binary)
+                    all_hdd[class_idx].append(hdd)
+                    all_dsc[class_idx].append(dsc)
             
             # Calculate Betti numbers using pred_labels_np
             for i in range(len(masks_np)):
@@ -124,15 +125,21 @@ def evaluate_model(model, test_loader, device, criterion):
             betti_errors.append(be)
             topological_successes.append(ts)
     
-    # Calculate percentiles for HDD and DSC
-    hdd_percentiles = compute_percentiles([h for sublist in all_hdd for h in sublist], [25, 50, 75])
-    dsc_percentiles = compute_percentiles([d for sublist in all_dsc for d in sublist], [25, 50, 75])
+    # Calculate percentiles for HDD and DSC per class
+    hdd_percentiles = [
+        compute_percentiles(class_hdds, [25, 50, 75]) if len(class_hdds) > 0 else [None, None, None]
+        for class_hdds in all_hdd
+    ]
+    dsc_percentiles = [
+        compute_percentiles(class_dscs, [25, 50, 75]) if len(class_dscs) > 0 else [None, None, None]
+        for class_dscs in all_dsc
+    ]
     
     # Calculate percentiles for gDSC
-    gdsc_percentiles = compute_percentiles([gd for gd in class_gdice], [25, 50, 75])
+    gdsc_percentiles = compute_percentiles([gd for gd in class_gdice], [25, 50, 75]) if any(class_gdice) else [None, None, None]
     
     # Calculate percentiles for Betti Error
-    betti_percentiles = compute_percentiles(betti_errors, [98, 99, 100])
+    betti_percentiles = compute_percentiles(betti_errors, [98, 99, 100]) if len(betti_errors) > 0 else [None, None, None]
     
     results = {
         'ce_loss': mean_ce_loss,
@@ -140,11 +147,11 @@ def evaluate_model(model, test_loader, device, criterion):
         'class_gdice': class_gdice.tolist(),
         'mean_hdd': mean_hdd,
         'mean_dsc': mean_dsc,
-        'mean_betti_error': np.mean(betti_errors),
-        'std_betti_error': np.std(betti_errors),
-        'topological_success_rate': np.mean(topological_successes),
-        'hdd_percentiles': hdd_percentiles.tolist(),
-        'dsc_percentiles': dsc_percentiles.tolist(),
+        'mean_betti_error': np.mean(betti_errors) if len(betti_errors) > 0 else None,
+        'std_betti_error': np.std(betti_errors) if len(betti_errors) > 0 else None,
+        'topological_success_rate': np.mean(topological_successes) if len(topological_successes) > 0 else None,
+        'hdd_percentiles': [hp.tolist() for hp in hdd_percentiles],
+        'dsc_percentiles': [dp.tolist() for dp in dsc_percentiles],
         'gdsc_percentiles': gdsc_percentiles.tolist(),
         'betti_percentiles': betti_percentiles.tolist(),
     }

@@ -4,9 +4,29 @@ from scipy.stats import wilcoxon
 import gudhi
 
 # Dice Similarity Coefficient (DSC)
-def dice_coefficient(y_pred, y_true):
+def dice_coefficient(y_pred, y_true, default_value=0.0):
+    """
+    Calculate Dice coefficient between two binary masks.
+    If both masks are empty, returns 1.0 (perfect match).
+    If only one mask is empty, returns default_value.
+    
+    Args:
+        y_pred: Binary prediction mask
+        y_true: Binary ground truth mask
+        default_value: Value to return when only one mask is empty (default: 0.0)
+    """
+    pred_sum = np.sum(y_pred)
+    true_sum = np.sum(y_true)
+    
+    # Both masks are empty - perfect match
+    if pred_sum == 0 and true_sum == 0:
+        return 1.0
+    # Only one mask is empty - return default value
+    if pred_sum == 0 or true_sum == 0:
+        return default_value
+        
     intersection = np.sum(y_pred * y_true)
-    return 2.0 * intersection / (np.sum(y_pred) + np.sum(y_true))
+    return 2.0 * intersection / (pred_sum + true_sum)
 
 # Generalized Dice Similarity Coefficient (gDSC)
 def generalized_dice(y_preds, y_trues, epsilon=1e-7):
@@ -39,22 +59,21 @@ def generalized_dice(y_preds, y_trues, epsilon=1e-7):
     return mean_dice, class_dice
 
 # Hausdorff Distance (HDD)
-def hausdorff_distance(y_pred, y_true):
+def hausdorff_distance(y_pred, y_true, default_value=float('inf')):
     """
     Calculate the Hausdorff distance between two binary masks.
+    If either mask is empty, returns default_value.
     
     Args:
         y_pred: Binary prediction mask
         y_true: Binary ground truth mask
-    
-    Returns:
-        float: Hausdorff distance
+        default_value: Value to return when either mask is empty (default: inf)
     """
     pred_points = np.argwhere(y_pred > 0)
     true_points = np.argwhere(y_true > 0)
     
     if len(pred_points) == 0 or len(true_points) == 0:
-        return float('inf')
+        return default_value
         
     return max(
         directed_hausdorff(pred_points, true_points)[0],
