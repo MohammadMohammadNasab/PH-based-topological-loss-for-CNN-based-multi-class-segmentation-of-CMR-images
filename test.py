@@ -4,11 +4,13 @@ import torch
 import numpy  as np
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
+from baseline_improvement.CCA import connected_component_analysis
 from unet import UNet
 from utils.metrics import generalized_dice, dice_coefficient, hausdorff_distance
 from utils.dataloading import get_patient_data, ValACDCDataset
 from utils.metrics import betti_error, topological_success, compute_percentiles
 from utils.metrics import compute_class_combinations_betti
+import datetime
 
 CLASS_LABELS = {
     0: 'Background',
@@ -27,6 +29,8 @@ def parse_args():
                         help='Batch size for testing')
     parser.add_argument('--save_visualizations', action='store_true',
                         help='Save segmentation visualizations')
+    parser.add_argument('--apply_cca', action='store_true',
+                        help='Apply Connected Component Analysis post-processing')
     return parser.parse_args()
 
 def save_segmentation_visualization(image, true_mask, pred_mask, save_path):
@@ -54,7 +58,7 @@ def save_segmentation_visualization(image, true_mask, pred_mask, save_path):
     plt.savefig(save_path)
     plt.close()
 
-def evaluate_model(model, test_loader, device, criterion):
+def evaluate_model(model, test_loader, device, criterion, apply_cca=False):
     """Similar to training evaluation but with additional metrics"""
     model.eval()
     total_ce_loss = 0
@@ -81,6 +85,16 @@ def evaluate_model(model, test_loader, device, criterion):
             pred_probs_np = pred_probs.cpu().numpy()  # Shape: (B, C, H, W)
             pred_labels_np = pred_labels.cpu().numpy()  # Shape: (B, H, W)
             masks_np = masks.cpu().numpy()  # Shape: (B, H, W)
+            
+            if apply_cca:
+                # Apply CCA to each class separately
+                for class_idx in range(1, 4):  # Skip background class
+                    for batch_idx in range(pred_labels_np.shape[0]):
+                        class_mask = (pred_labels_np[batch_idx] == class_idx)
+                        if class_mask.any():
+                            processed_mask = connected_component_analysis(class_mask)
+                            pred_labels_np[batch_idx][class_mask] = 0  # Clear original
+                            pred_labels_np[batch_idx][processed_mask == 1] = class_idx
             
             # Store for batch metrics
             all_predictions.append(pred_probs_np)  # Storing probabilities for gDSC
@@ -197,10 +211,13 @@ def pretty_print_metrics(results):
     print(f"Topological Success Rate: {results['topological_success_rate']:.3f}")
     print(f"Betti Error Percentiles [98th, 99th, 100th]: [{', '.join(f'{x:.3f}' for x in results['betti_percentiles'])}]")
 
-def save_detailed_results(results, results_dir):
-    """Save detailed results to a formatted text file with 3 decimal places"""
-    with open(os.path.join(results_dir, 'detailed_metrics.txt'), 'w') as f:
-        f.write("=== ACDC Cardiac Segmentation Results ===\n\n")
+def save_detailed_results(results, results_dir, apply_cca):
+    """Save detailed results to a formatted text file by appending"""
+    with open(os.path.join(results_dir, 'detailed_metrics.txt'), 'a') as f:
+        f.write("\n" + "="*50 + "\n")  # Separator between runs
+        f.write(f"Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("=== ACDC Cardiac Segmentation Results ===\n")
+        f.write(f"Post-processing: {'CCA' if apply_cca else 'None'}\n\n")
         
         f.write("Cross Entropy Loss: {:.3f}\n\n".format(results['ce_loss']))
         
@@ -229,10 +246,10 @@ def save_detailed_results(results, results_dir):
         f.write(f"Topological Success Rate: {results['topological_success_rate']:.3f}\n")
         f.write(f"Betti Error Percentiles [98th, 99th, 100th]: [{', '.join(f'{x:.3f}' for x in results['betti_percentiles'])}]\n")
 
-def test_model(model, test_loader, device, results_dir, save_visualizations):
+def test_model(model, test_loader, device, results_dir, save_visualizations, apply_cca):
     """Modified test_model function with improved reporting"""
     criterion = torch.nn.CrossEntropyLoss()
-    results = evaluate_model(model, test_loader, device, criterion)
+    results = evaluate_model(model, test_loader, device, criterion, apply_cca)
     
     # Save visualizations if requested
     if save_visualizations:
@@ -254,7 +271,7 @@ def test_model(model, test_loader, device, results_dir, save_visualizations):
     
     # Print and save detailed results
     pretty_print_metrics(results)
-    save_detailed_results(results, results_dir)
+    save_detailed_results(results, results_dir, apply_cca)
     
     return results
 
@@ -288,10 +305,15 @@ def main():
     os.makedirs(results_dir, exist_ok=True)
     
     # Test model
-    results = test_model(model, test_loader, device, results_dir, args.save_visualizations)
+    results = test_model(model, test_loader, device, results_dir, 
+                        args.save_visualizations, args.apply_cca)
     
-    # Save results
-    with open(os.path.join(results_dir, 'metrics.txt'), 'w') as f:
+    # Save results by appending
+    metrics_file = os.path.join(results_dir, 'metrics.txt')
+    with open(metrics_file, 'a') as f:
+        f.write("\n" + "="*50 + "\n")  # Separator between runs
+        f.write(f"Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Post-processing: {'CCA' if args.apply_cca else 'None'}\n")
         for metric, value in results.items():
             f.write(f'{metric}: {value}\n')
             print(f'{metric}: {value}')
