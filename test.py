@@ -10,6 +10,13 @@ from utils.dataloading import get_patient_data, ValACDCDataset
 from utils.metrics import betti_error, topological_success, compute_percentiles
 from utils.metrics import compute_class_combinations_betti
 
+CLASS_LABELS = {
+    0: 'Background',
+    1: 'RV',
+    2: 'MY',
+    3: 'LV'
+}
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Test trained UNet model on ACDC dataset')
     parser.add_argument('--test_dir', type=str, default='data/preprocessed/test',
@@ -158,8 +165,72 @@ def evaluate_model(model, test_loader, device, criterion):
     
     return results
 
+def pretty_print_metrics(results):
+    """Helper function to format metrics nicely with 3 decimal places"""
+    print("\n=== Segmentation Results ===\n")
+    
+    print("Cross Entropy Loss: {:.3f}".format(results['ce_loss']))
+    
+    print("\n=== Dice Scores ===")
+    print("Mean Generalized Dice Score: {:.3f}".format(results['mean_gdice']))
+    print("\nPer-Class Dice Scores:")
+    for idx, score in enumerate(results['mean_dsc']):
+        print(f"{CLASS_LABELS[idx]}: {score:.3f}")
+    
+    print("\n=== Hausdorff Distances ===")
+    print("Per-Class Hausdorff Distances:")
+    for idx, hdd in enumerate(results['mean_hdd']):
+        if hdd == float('inf'):
+            print(f"{CLASS_LABELS[idx]}: inf")
+        else:
+            print(f"{CLASS_LABELS[idx]}: {hdd:.3f}")
+    
+    print("\n=== Percentiles ===")
+    for idx, (hdd_p, dsc_p) in enumerate(zip(results['hdd_percentiles'], results['dsc_percentiles'])):
+        print(f"\n{CLASS_LABELS[idx]}:")
+        print(f"  DSC [25th, 50th, 75th]: [{', '.join(f'{x:.3f}' if x is not None else 'nan' for x in dsc_p)}]")
+        print(f"  HDD [25th, 50th, 75th]: [{', '.join(f'{x:.3f}' if x is not None and x != float('inf') else 'inf' for x in hdd_p)}]")
+    
+    print("\n=== Topological Metrics ===")
+    print(f"Mean Betti Error: {results['mean_betti_error']:.3f}")
+    print(f"Std Betti Error: {results['std_betti_error']:.3f}")
+    print(f"Topological Success Rate: {results['topological_success_rate']:.3f}")
+    print(f"Betti Error Percentiles [98th, 99th, 100th]: [{', '.join(f'{x:.3f}' for x in results['betti_percentiles'])}]")
+
+def save_detailed_results(results, results_dir):
+    """Save detailed results to a formatted text file with 3 decimal places"""
+    with open(os.path.join(results_dir, 'detailed_metrics.txt'), 'w') as f:
+        f.write("=== ACDC Cardiac Segmentation Results ===\n\n")
+        
+        f.write("Cross Entropy Loss: {:.3f}\n\n".format(results['ce_loss']))
+        
+        f.write("=== Dice Scores ===\n")
+        f.write(f"Mean Generalized Dice Score: {results['mean_gdice']:.3f}\n")
+        f.write("\nPer-Class Dice Scores:\n")
+        for idx, score in enumerate(results['mean_dsc']):
+            f.write(f"{CLASS_LABELS[idx]}: {score:.3f}\n")
+        
+        f.write("\n=== Hausdorff Distances ===\n")
+        for idx, hdd in enumerate(results['mean_hdd']):
+            if hdd == float('inf'):
+                f.write(f"{CLASS_LABELS[idx]}: inf\n")
+            else:
+                f.write(f"{CLASS_LABELS[idx]}: {hdd:.3f}\n")
+        
+        f.write("\n=== Statistical Analysis ===\n")
+        for idx, (hdd_p, dsc_p) in enumerate(zip(results['hdd_percentiles'], results['dsc_percentiles'])):
+            f.write(f"\n{CLASS_LABELS[idx]}:\n")
+            f.write(f"  DSC Percentiles [25th, 50th, 75th]: [{', '.join(f'{x:.3f}' if x is not None else 'nan' for x in dsc_p)}]\n")
+            f.write(f"  HDD Percentiles [25th, 50th, 75th]: [{', '.join(f'{x:.3f}' if x is not None and x != float('inf') else 'inf' for x in hdd_p)}]\n")
+        
+        f.write("\n=== Topological Analysis ===\n")
+        f.write(f"Mean Betti Error: {results['mean_betti_error']:.3f}\n")
+        f.write(f"Std Betti Error: {results['std_betti_error']:.3f}\n")
+        f.write(f"Topological Success Rate: {results['topological_success_rate']:.3f}\n")
+        f.write(f"Betti Error Percentiles [98th, 99th, 100th]: [{', '.join(f'{x:.3f}' for x in results['betti_percentiles'])}]\n")
+
 def test_model(model, test_loader, device, results_dir, save_visualizations):
-    """Simplified test_model using evaluate_model"""
+    """Modified test_model function with improved reporting"""
     criterion = torch.nn.CrossEntropyLoss()
     results = evaluate_model(model, test_loader, device, criterion)
     
@@ -181,14 +252,9 @@ def test_model(model, test_loader, device, results_dir, save_visualizations):
                         save_path
                     )
     
-    # Save Betti numbers analysis
-    betti_file = os.path.join(results_dir, 'betti_numbers.txt')
-    with open(betti_file, 'w') as f:
-        # Write summary statistics
-        f.write("\nSummary Statistics:\n")
-        f.write(f"Mean Betti Error: {results['mean_betti_error']:.4f}\n")
-        f.write(f"Std Betti Error: {results['std_betti_error']:.4f}\n")
-        f.write(f"Topological Success Rate: {results['topological_success_rate']:.4f}\n")
+    # Print and save detailed results
+    pretty_print_metrics(results)
+    save_detailed_results(results, results_dir)
     
     return results
 
