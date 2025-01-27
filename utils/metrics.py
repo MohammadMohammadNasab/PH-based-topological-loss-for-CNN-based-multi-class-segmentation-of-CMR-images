@@ -40,8 +40,22 @@ def generalized_dice(y_preds, y_trues, epsilon=1e-7):
 
 # Hausdorff Distance (HDD)
 def hausdorff_distance(y_pred, y_true):
+    """
+    Calculate the Hausdorff distance between two binary masks.
+    
+    Args:
+        y_pred: Binary prediction mask
+        y_true: Binary ground truth mask
+    
+    Returns:
+        float: Hausdorff distance
+    """
     pred_points = np.argwhere(y_pred > 0)
     true_points = np.argwhere(y_true > 0)
+    
+    if len(pred_points) == 0 or len(true_points) == 0:
+        return float('inf')
+        
     return max(
         directed_hausdorff(pred_points, true_points)[0],
         directed_hausdorff(true_points, pred_points)[0]

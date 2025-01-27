@@ -9,8 +9,8 @@ import torch.utils.data as data
 import torch
 import numpy as np
 from unet import UNet
-from utils.metrics import generalized_dice
 from utils.dataloading import get_patient_data, TrainACDCDataset, ValACDCDataset
+from utils.metrics import generalized_dice, hausdorff_distance
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train UNet model for ACDC segmentation')
@@ -126,7 +126,7 @@ def main():
         plt.close()
 
     # Add new logging function
-    def log_metrics(exp_dir, iteration, train_loss, val_loss, mean_gdice, class_gdice, is_best=False):
+    def log_metrics(exp_dir, iteration, train_loss, val_loss, mean_gdice, class_gdice, class_hdd, is_best=False):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_file = os.path.join(exp_dir, 'logs', 'training_log.txt')
         
@@ -134,9 +134,9 @@ def main():
         log_entry += f"Training Loss: {train_loss:.4f}\n"
         log_entry += f"Validation Loss: {val_loss:.4f}\n"
         log_entry += f"Mean Validation GDice: {mean_gdice:.4f}\n"
-        log_entry += "Per-class GDice scores:\n"
-        for i, dice in enumerate(class_gdice):
-            log_entry += f"  Class {i}: {dice:.4f}\n"
+        log_entry += "Per-class metrics:\n"
+        for i, (dice, hdd) in enumerate(zip(class_gdice, class_hdd)):
+            log_entry += f"  Class {i}: GDice={dice:.4f}, HDD={hdd:.4f}\n"
         
         if is_best:
             log_entry += "*** New Best Model! ***\n"
@@ -155,6 +155,7 @@ def main():
         total_ce_loss = 0
         all_predictions = []
         all_targets = []
+        all_hdd = [[] for _ in range(4)]  # For background and 3 classes
         
         with torch.no_grad():
             for images, masks in val_loader:
@@ -165,10 +166,21 @@ def main():
                 ce_loss = criterion(outputs, masks)
                 total_ce_loss += ce_loss.item()
                 
-                # Convert predictions to probabilities
+                # Convert predictions to probabilities and then to class labels
                 pred = torch.softmax(outputs, dim=1)
+                pred_labels = torch.argmax(pred, dim=1)
                 pred = pred.cpu().numpy()
+                pred_labels = pred_labels.cpu().numpy()
                 masks = masks.cpu().numpy()
+                
+                # Calculate Hausdorff distance for each class in the batch
+                for class_idx in range(4):  # Including background class
+                    for batch_idx in range(pred_labels.shape[0]):
+                        pred_binary = (pred_labels[batch_idx] == class_idx).astype(np.float32)
+                        true_binary = (masks[batch_idx] == class_idx).astype(np.float32)
+                        if np.sum(pred_binary) > 0 and np.sum(true_binary) > 0:  # Only calculate if both masks have the class
+                            hdd = hausdorff_distance(pred_binary, true_binary)
+                            all_hdd[class_idx].append(hdd)
                 
                 all_predictions.append(pred)
                 all_targets.append(masks)
@@ -177,23 +189,19 @@ def main():
         mean_ce_loss = total_ce_loss / len(val_loader)
         
         # Concatenate all batches
-        all_predictions = np.concatenate(all_predictions, axis=0)  # Shape: (N, C, H, W)
-        all_targets = np.concatenate(all_targets, axis=0)         # Shape: (N, H, W)
-        
-        # Ensure predictions are properly normalized
-        all_predictions = np.clip(all_predictions, 1e-7, 1.0)
-        all_predictions = all_predictions / all_predictions.sum(axis=1, keepdims=True)
+        all_predictions = np.concatenate(all_predictions, axis=0)
+        all_targets = np.concatenate(all_targets, axis=0)
         
         # Calculate generalized dice score
-        try:
-            mean_gdice, class_gdice = generalized_dice(all_predictions, all_targets)
-        except Exception as e:
-            print("Error in dice calculation:")
-            print(f"Predictions shape: {all_predictions.shape}")
-            print(f"Targets shape: {all_targets.shape}")
-            raise e
+        all_predictions = np.clip(all_predictions, 1e-7, 1.0)
+        all_predictions = all_predictions / all_predictions.sum(axis=1, keepdims=True)
+        mean_gdice, class_gdice = generalized_dice(all_predictions, all_targets)
         
-        return mean_ce_loss, mean_gdice, class_gdice.tolist()
+        # Calculate mean Hausdorff distance for each class
+        mean_hdd = [np.mean(class_hdds) if len(class_hdds) > 0 else float('inf') 
+                    for class_hdds in all_hdd]
+        
+        return mean_ce_loss, mean_gdice, class_gdice.tolist(), mean_hdd
 
     # Training loop with argument values
     best_gdice = 0
@@ -225,7 +233,7 @@ def main():
         
         # Evaluate using argument value for validation steps
         if iteration % args.validation_steps == 0:
-            val_ce_loss, val_gdice, class_gdice = evaluate_model(model, val_loader)
+            val_ce_loss, val_gdice, class_gdice, class_hdd = evaluate_model(model, val_loader)
             print(f'Iteration {iteration}:')
             print(f'Training CE Loss: {loss.item():.4f}')
             print(f'Validation CE Loss: {val_ce_loss:.4f}')
@@ -233,6 +241,9 @@ def main():
             print('Per-class GDice scores:')
             for i, dice in enumerate(class_gdice):
                 print(f'  Class {i}: {dice:.4f}')
+            print('Per-class Hausdorff distances:')
+            for i, hdd in enumerate(class_hdd):
+                print(f'  Class {i}: {hdd:.4f}')
             
             # Store metrics
             iterations.append(iteration)
@@ -264,10 +275,10 @@ def main():
                 }, model_path)
                 print(f'New best model saved! Mean GDice: {best_gdice:.4f}')
                 # Log the best model metrics
-                log_metrics(exp_dir, iteration, loss.item(), val_ce_loss, val_gdice, class_gdice, is_best=True)
+                log_metrics(exp_dir, iteration, loss.item(), val_ce_loss, val_gdice, class_gdice, class_hdd, is_best=True)
             else:
                 # Log regular metrics
-                log_metrics(exp_dir, iteration, loss.item(), val_ce_loss, val_gdice, class_gdice, is_best=False)
+                log_metrics(exp_dir, iteration, loss.item(), val_ce_loss, val_gdice, class_gdice, class_hdd, is_best=False)
 
         iteration += 1
 
