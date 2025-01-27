@@ -9,16 +9,34 @@ def dice_coefficient(y_pred, y_true):
     return 2.0 * intersection / (np.sum(y_pred) + np.sum(y_true))
 
 # Generalized Dice Similarity Coefficient (gDSC)
-def generalized_dice(y_preds, y_trues, epsilon=1e-6):
-    if y_trues.ndim == 3:
-        num_classes = y_preds.shape[1]
-        y_trues = np.eye(num_classes)[y_trues]  # One-hot encode
-        y_trues = y_trues.transpose(0, 3, 1, 2)
+def generalized_dice(y_preds, y_trues, epsilon=1e-7):
+    """
+    Calculate generalized dice score.
     
-    intersection = (y_preds * y_trues).sum(axis=(0, 2, 3))
-    sums = y_preds.sum(axis=(0, 2, 3)) + y_trues.sum(axis=(0, 2, 3))
-    dice = (2.0 * intersection + epsilon) / (sums + epsilon)
-    return dice.mean()
+    Args:
+        y_preds: predictions of shape (B, C, H, W) - softmax probabilities
+        y_trues: ground truth of shape (B, H, W) with class indices
+        epsilon: small constant to avoid division by zero
+    
+    Returns:
+        tuple (mean_dice, class_dice) where class_dice is array of dice scores per class
+    """
+    n_classes = y_preds.shape[1]
+    
+    # Convert y_trues to one-hot encoding
+    y_trues_one_hot = np.zeros_like(y_preds)
+    for i in range(n_classes):
+        y_trues_one_hot[:, i, ...] = (y_trues == i)
+    
+    # Calculate intersection and union
+    intersection = np.sum(y_preds * y_trues_one_hot, axis=(0, 2, 3))
+    union = np.sum(y_preds, axis=(0, 2, 3)) + np.sum(y_trues_one_hot, axis=(0, 2, 3))
+    
+    # Calculate dice score for each class
+    class_dice = (2.0 * intersection + epsilon) / (union + epsilon)
+    mean_dice = np.mean(class_dice)
+    
+    return mean_dice, class_dice
 
 # Hausdorff Distance (HDD)
 def hausdorff_distance(y_pred, y_true):
@@ -134,7 +152,7 @@ def example_metrics():
 
     # Calculate DSC and gDSC
     dsc_per_class = [dice_coefficient(y_pred[i], y_true[i]) for i in range(len(y_pred))]
-    gdsc = generalized_dice(y_pred, y_true)
+    gdsc_mean, gdsc_per_class = generalized_dice(y_pred, y_true)
 
     # Calculate HDD
     hdd_per_class = [hausdorff_distance(y_pred[i], y_true[i]) for i in range(len(y_pred))]
@@ -146,7 +164,8 @@ def example_metrics():
     ts = topological_success(be)
 
     print("Per-Class DSC:", dsc_per_class)
-    print("Generalized DSC:", gdsc)
+    print("Generalized DSC (mean):", gdsc_mean)
+    print("Generalized DSC (per class):", gdsc_per_class)
     print("Per-Class HDD:", hdd_per_class)
     print("Betti Error:", be)
     print("Topological Success:", ts)

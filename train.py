@@ -126,14 +126,17 @@ def main():
         plt.close()
 
     # Add new logging function
-    def log_metrics(exp_dir, iteration, train_loss, val_loss, val_gdice, is_best=False):
+    def log_metrics(exp_dir, iteration, train_loss, val_loss, mean_gdice, class_gdice, is_best=False):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_file = os.path.join(exp_dir, 'logs', 'training_log.txt')
         
         log_entry = f"[{timestamp}] Iteration {iteration}\n"
         log_entry += f"Training Loss: {train_loss:.4f}\n"
         log_entry += f"Validation Loss: {val_loss:.4f}\n"
-        log_entry += f"Validation GDice: {val_gdice:.4f}\n"
+        log_entry += f"Mean Validation GDice: {mean_gdice:.4f}\n"
+        log_entry += "Per-class GDice scores:\n"
+        for i, dice in enumerate(class_gdice):
+            log_entry += f"  Class {i}: {dice:.4f}\n"
         
         if is_best:
             log_entry += "*** New Best Model! ***\n"
@@ -150,8 +153,8 @@ def main():
     def evaluate_model(model, val_loader):
         model.eval()
         total_ce_loss = 0
-        predictions = []
-        targets = []
+        all_predictions = []
+        all_targets = []
         
         with torch.no_grad():
             for images, masks in val_loader:
@@ -162,24 +165,35 @@ def main():
                 ce_loss = criterion(outputs, masks)
                 total_ce_loss += ce_loss.item()
                 
-                # Convert predictions for dice calculation
+                # Convert predictions to probabilities
                 pred = torch.softmax(outputs, dim=1)
                 pred = pred.cpu().numpy()
                 masks = masks.cpu().numpy()
                 
-                # Store batch predictions and targets
-                predictions.append(pred)
-                targets.append(masks)
+                all_predictions.append(pred)
+                all_targets.append(masks)
         
         # Calculate mean CE loss
         mean_ce_loss = total_ce_loss / len(val_loader)
         
-        # Calculate generalized dice score
-        all_preds = np.concatenate(predictions, axis=0)
-        all_targets = np.concatenate(targets, axis=0)
-        gdice = generalized_dice(all_preds, all_targets)
+        # Concatenate all batches
+        all_predictions = np.concatenate(all_predictions, axis=0)  # Shape: (N, C, H, W)
+        all_targets = np.concatenate(all_targets, axis=0)         # Shape: (N, H, W)
         
-        return mean_ce_loss, gdice
+        # Ensure predictions are properly normalized
+        all_predictions = np.clip(all_predictions, 1e-7, 1.0)
+        all_predictions = all_predictions / all_predictions.sum(axis=1, keepdims=True)
+        
+        # Calculate generalized dice score
+        try:
+            mean_gdice, class_gdice = generalized_dice(all_predictions, all_targets)
+        except Exception as e:
+            print("Error in dice calculation:")
+            print(f"Predictions shape: {all_predictions.shape}")
+            print(f"Targets shape: {all_targets.shape}")
+            raise e
+        
+        return mean_ce_loss, mean_gdice, class_gdice.tolist()
 
     # Training loop with argument values
     best_gdice = 0
@@ -211,11 +225,14 @@ def main():
         
         # Evaluate using argument value for validation steps
         if iteration % args.validation_steps == 0:
-            val_ce_loss, val_gdice = evaluate_model(model, val_loader)
+            val_ce_loss, val_gdice, class_gdice = evaluate_model(model, val_loader)
             print(f'Iteration {iteration}:')
             print(f'Training CE Loss: {loss.item():.4f}')
             print(f'Validation CE Loss: {val_ce_loss:.4f}')
-            print(f'Validation GDice: {val_gdice:.4f}')
+            print(f'Mean Validation GDice: {val_gdice:.4f}')
+            print('Per-class GDice scores:')
+            for i, dice in enumerate(class_gdice):
+                print(f'  Class {i}: {dice:.4f}')
             
             # Store metrics
             iterations.append(iteration)
@@ -245,12 +262,12 @@ def main():
                     'val_gdice_scores': val_gdice_scores,
                     'iterations': iterations
                 }, model_path)
-                print(f'New best model saved! GDice: {best_gdice:.4f}')
+                print(f'New best model saved! Mean GDice: {best_gdice:.4f}')
                 # Log the best model metrics
-                log_metrics(exp_dir, iteration, loss.item(), val_ce_loss, val_gdice, is_best=True)
+                log_metrics(exp_dir, iteration, loss.item(), val_ce_loss, val_gdice, class_gdice, is_best=True)
             else:
                 # Log regular metrics
-                log_metrics(exp_dir, iteration, loss.item(), val_ce_loss, val_gdice, is_best=False)
+                log_metrics(exp_dir, iteration, loss.item(), val_ce_loss, val_gdice, class_gdice, is_best=False)
 
         iteration += 1
 
