@@ -223,13 +223,13 @@ def main():
             val_gdice_scores.append(val_gdice)
             
             # Plot current metrics
-            plot_metrics(
-                train_losses[::args.validation_steps],  # Sample training loss at validation steps
-                val_losses,
-                val_gdice_scores,
-                iterations,
-                exp_dir
-            )
+            # plot_metrics(
+            #     train_losses[::args.validation_steps],  # Sample training loss at validation steps
+            #     val_losses,
+            #     val_gdice_scores,
+            #     iterations,
+            #     exp_dir
+            #)
             
             # Modified model saving section
             if val_gdice > best_gdice:
