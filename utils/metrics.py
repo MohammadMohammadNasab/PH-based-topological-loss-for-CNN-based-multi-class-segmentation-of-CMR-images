@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.spatial.distance import directed_hausdorff
 from scipy.stats import wilcoxon
+import gudhi
 
 # Dice Similarity Coefficient (DSC)
 def dice_coefficient(y_pred, y_true):
@@ -43,6 +44,78 @@ def topological_success(betti_error):
 # Wilcoxon Signed-Rank Test
 def wilcoxon_signed_rank_test(metric1, metric2):
     return wilcoxon(metric1, metric2)
+
+def compute_betti_numbers(binary_image, max_dim=2):
+    """
+    Compute Betti numbers for a binary image using persistent homology.
+    
+    Args:
+        binary_image (np.ndarray): Binary image (0s and 1s)
+        max_dim (int): Maximum homology dimension to compute (default=2)
+    
+    Returns:
+        list: Betti numbers [β₀, β₁, β₂] where:
+              β₀ = number of connected components
+              β₁ = number of holes/tunnels
+              β₂ = number of voids/cavities
+    """
+    # Create a cubical complex from the binary image
+    cubical_complex = gudhi.CubicalComplex(
+        dimensions=[binary_image.shape[0], binary_image.shape[1]],
+        top_dimensional_cells=binary_image.flatten()
+    )
+    
+    # Compute persistence
+    persistence = cubical_complex.persistence()
+    
+    # Initialize Betti numbers
+    betti = [0] * (max_dim + 1)
+    
+    # Count features that persist
+    for dim, (birth, death) in persistence:
+        if dim <= max_dim and death == float('inf'):
+            betti[dim] += 1
+    
+    return betti
+
+
+def compute_class_combinations_betti(segmentation, max_dim=2):
+    """
+    Compute Betti numbers for individual classes and their pair combinations.
+    
+    Args:
+        segmentation (np.ndarray): Segmentation mask with class labels
+        max_dim (int): Maximum homology dimension to compute (default=2)
+    
+    Returns:
+        dict: Dictionary containing Betti numbers for:
+              - Single classes (1, 2, 3)
+              - Class pairs ((1,2), (1,3), (2,3))
+    """
+    combinations = {
+        (1,): None,   # RV
+        (2,): None,   # MYO
+        (3,): None,   # LV
+        (1, 2): None, # RV + MYO
+        (1, 3): None, # RV + LV
+        (2, 3): None  # MYO + LV
+    }
+    
+    # Compute Betti numbers for single classes
+    for class_idx in range(1, 4):
+        mask = (segmentation == class_idx).astype(np.float32)
+        combinations[(class_idx,)] = compute_betti_numbers(mask, max_dim)
+    
+    # Compute Betti numbers for class pairs
+    pairs = [(1, 2), (1, 3), (2, 3)]
+    for pair in pairs:
+        mask = np.logical_or(
+            segmentation == pair[0],
+            segmentation == pair[1]
+        ).astype(np.float32)
+        combinations[pair] = compute_betti_numbers(mask, max_dim)
+    
+    return combinations
 
 # Example Usage
 def example_metrics():

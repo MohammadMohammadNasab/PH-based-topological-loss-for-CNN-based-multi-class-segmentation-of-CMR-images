@@ -10,7 +10,7 @@ import torch
 import numpy as np
 from unet import UNet
 from utils.metrics import generalized_dice
-from utils.dataloading import get_patient_data, ACDCDataset
+from utils.dataloading import get_patient_data, TrainACDCDataset, ValACDCDataset
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train UNet model for ACDC segmentation')
@@ -55,11 +55,11 @@ def main():
     exp_dir = create_experiment_dir()
     
     # Load data using argument paths
-    train_data_dict = get_patient_data(args.train_dir)
-    val_data_dict = get_patient_data(args.val_dir)
+    train_data_dict , _,_ = get_patient_data(args.train_dir)
+    val_data_dict, val_image_paths, val_lbl_paths = get_patient_data(args.val_dir)
 
-    train_dataset = ACDCDataset(train_data_dict)
-    val_dataset = ACDCDataset(val_data_dict)
+    train_dataset = TrainACDCDataset(train_data_dict)
+    val_dataset = ValACDCDataset(val_image_paths, val_lbl_paths)
 
     model = UNet(
         in_channels=1,
