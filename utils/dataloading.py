@@ -131,7 +131,7 @@ class ValACDCDataset(Dataset):
         self.label_paths = labels
 
     def __len__(self):
-        return len(self.patient_ids)
+        return len(self.images_paths)
 
     def __getitem__(self, idx):
         img_path = self.images_paths[idx]
