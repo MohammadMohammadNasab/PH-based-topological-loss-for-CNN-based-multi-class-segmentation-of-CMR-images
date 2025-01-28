@@ -1,9 +1,10 @@
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import pearsonr, spearmanr
 import torch
 from torch.utils.data import DataLoader
-from utils.dataloading import TopoACDCDataset,  get_patient_data
+from utils.dataloading import TopoACDCDataset, get_patient_data
 from unet import UNet
 from utils.metrics import generalized_dice, betti_error, topological_success
 from utils.topo import multi_class_topological_post_processing
@@ -202,7 +203,19 @@ def run_analysis_with_model(model, data_loader, device):
     # Call existing function to analyze relationship
     analyze_topo_spatial_relationship(betti_errors, topo_successes, gdsc_scores)
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Analysis script for topological metrics')
+    parser.add_argument('--model_path', type=str, required=True,
+                      help='Path to the model checkpoint')
+    parser.add_argument('--data_path', type=str, 
+                      default=r'C:\Users\Mohammad\Desktop\ML_Project\data\preprocessed\test',
+                      help='Path to the test data directory')
+    parser.add_argument('--batch_size', type=int, default=1,
+                      help='Batch size for dataloader')
+    return parser.parse_args()
+
 def main():
+    args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     checkpoint = torch.load(args.model_path)
     
@@ -217,9 +230,9 @@ def main():
     ).to(device)
     
     model.load_state_dict(checkpoint['model_state_dict'])
-    _, image_paths, label_paths = get_patient_data(r'C:\Users\Mohammad\Desktop\ML_Project\data\preprocessed\test')
+    _, image_paths, label_paths = get_patient_data(args.data_path)
     dataset = TopoACDCDataset(image_paths, label_paths)
-    dataloder = DataLoader(dataset, 1, shuffle=False)
+    dataloader = DataLoader(dataset, args.batch_size, shuffle=False)
     prior = {
         (1,):   (1, 0),
         (2,):   (1, 1),
@@ -228,6 +241,7 @@ def main():
         (1, 3): (2, 0),
         (2, 3): (1, 0)
     }
-    analyze_gdsc_topo_loss(model, dataloder, device= device, prior=prior)
+    analyze_gdsc_topo_loss(model, dataloader, device=device, prior=prior)
+
 if __name__ == "__main__":
     main()
