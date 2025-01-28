@@ -175,6 +175,7 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False):
         'mean_betti_error': np.mean(betti_errors) if len(betti_errors) > 0 else None,
         'std_betti_error': np.std(betti_errors) if len(betti_errors) > 0 else None,
         'topological_success_rate': np.mean(topological_successes) if len(topological_successes) > 0 else None,
+        'std_topological_success_rate': np.std(topological_successes) if len(topological_successes) > 0 else None,
         'hdd_percentiles': [hp.tolist() for hp in hdd_percentiles],
         'dsc_percentiles': [dp.tolist() for dp in dsc_percentiles],
         'gdsc_percentiles': gdsc_percentiles.tolist(),
@@ -213,6 +214,7 @@ def pretty_print_metrics(results):
     print(f"Mean Betti Error: {results['mean_betti_error']:.3f}")
     print(f"Std Betti Error: {results['std_betti_error']:.3f}")
     print(f"Topological Success Rate: {results['topological_success_rate']:.3f}")
+    print(f"Std Topological Success Rate: {results['std_topological_success_rate']:.3f}")
     print(f"Betti Error Percentiles [98th, 99th, 100th]: [{', '.join(f'{x:.3f}' for x in results['betti_percentiles'])}]")
 
 def save_detailed_results(results, results_dir, apply_cca, description):
@@ -250,6 +252,7 @@ def save_detailed_results(results, results_dir, apply_cca, description):
         f.write(f"Mean Betti Error: {results['mean_betti_error']:.3f}\n")
         f.write(f"Std Betti Error: {results['std_betti_error']:.3f}\n")
         f.write(f"Topological Success Rate: {results['topological_success_rate']:.3f}\n")
+        f.write(f"Std Topological Success Rate: {results['std_topological_success_rate']:.3f}\n")
         f.write(f"Betti Error Percentiles [98th, 99th, 100th]: [{', '.join(f'{x:.3f}' for x in results['betti_percentiles'])}]\n")
 
 def test_model(model, test_loader, device, results_dir, save_visualizations, apply_cca, description):
