@@ -231,7 +231,8 @@ def main():
     
     model.load_state_dict(checkpoint['model_state_dict'])
     _, image_paths, label_paths = get_patient_data(args.data_path)
-    dataset = TopoACDCDataset(image_paths, label_paths)
+    # Specify fixed size (224, 224) for both input and output
+    dataset = TopoACDCDataset(image_paths, label_paths, size=(224, 224))
     dataloader = DataLoader(dataset, args.batch_size, shuffle=False)
     prior = {
         (1,):   (1, 0),
