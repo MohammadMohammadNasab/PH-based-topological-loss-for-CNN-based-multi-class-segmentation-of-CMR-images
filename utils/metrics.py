@@ -96,34 +96,40 @@ def topological_success(betti_error):
 def wilcoxon_signed_rank_test(metric1, metric2):
     return wilcoxon(metric1, metric2)
 
-def compute_betti_numbers(binary_image, max_dim=1):
+def compute_betti_numbers(binary_image, max_dim=2):
     """
-    Compute Betti numbers B0 and B1 for a binary image using persistent homology.
+    Compute Betti numbers for a binary image using persistent homology.
     
     Args:
-        binary_image (np.ndarray): Binary image (1s for foreground, 0s for background)
-        max_dim (int): Maximum homology dimension to compute (default=1)
+        binary_image (np.ndarray): Binary image (0s and 1s)
+        max_dim (int): Maximum homology dimension to compute (default=2)
     
     Returns:
-        list: Betti numbers [B0, B1]
+        list: Betti numbers [β₀, β₁, β₂]
     """
     # Ensure binary image is properly formatted
     binary_image = binary_image.astype(np.float64)
     
-    # Invert the image: GUDHI considers 0s as foreground
-    inverted_image = 1 - binary_image
-    
-    # Create a cubical complex from the inverted binary image
-    cubical_complex = gudhi.CubicalComplex(top_dimensional_cells=inverted_image)
+    # Create a cubical complex from the binary image
+    # GUDHI considers 0s as foreground, so we invert the image
+    cubical_complex = gudhi.CubicalComplex(
+        top_dimensional_cells=1 - binary_image
+    )
     
     # Compute persistence with homology over Z2 field
-    cubical_complex.compute_persistence(homology_coeff_field=2)
+    persistence = cubical_complex.persistence(homology_coeff_field=2)
     
-    # Retrieve Betti numbers up to max_dim
-    betti_numbers = cubical_complex.betti_numbers()
+    # Initialize Betti numbers
+    betti = [0] * (max_dim + 1)
     
-    # Return Betti numbers up to max_dim
-    return betti_numbers[:max_dim + 1]
+    # Count features that persist
+    if persistence is not None:
+        for dim, (birth, death) in persistence:
+            if dim <= max_dim:
+                if death == float('inf') or (death - birth) > 0.5:  # Only count significant features
+                    betti[dim] += 1
+    
+    return betti
 
 def compute_class_combinations_betti(segmentation, max_dim=2):
     """

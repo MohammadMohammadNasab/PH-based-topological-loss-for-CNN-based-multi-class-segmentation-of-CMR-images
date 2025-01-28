@@ -142,10 +142,6 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False):
     betti_errors = []
     topological_successes = []
     for pred_betti, true_betti in all_betti:
-        print('pred betti')
-        print(pred_betti)
-        print('true betti')
-        print(true_betti)
         for combo in pred_betti.keys():
             pred_combo_betti = pred_betti[combo][:2]
             true_combo_betti = true_betti[combo][:2]
