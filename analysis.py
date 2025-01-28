@@ -10,7 +10,7 @@ from utils.metrics import generalized_dice, betti_error, topological_success
 from utils.topo import multi_class_topological_post_processing
 
 def normalize_metric(values):
-    # Min-max normalization
+    # ...existing code...
     min_val, max_val = np.min(values), np.max(values)
     if max_val == min_val:  # Avoid division by zero
         return np.zeros_like(values)
@@ -77,13 +77,6 @@ def analyze_extended_metrics(gdsc_values, loss_topo_values):
     import matplotlib.pyplot as plt
     from scipy.stats import pearsonr, spearmanr
 
-    def normalize_metric(values):
-        # ...existing code...
-        min_val, max_val = np.min(values), np.max(values)
-        if max_val == min_val:
-            return np.zeros_like(values)
-        return (values - min_val) / (max_val - min_val)
-
     gdsc_arr = np.array(gdsc_values, dtype=float)
     topo_loss_arr = np.array(loss_topo_values, dtype=float)
 
@@ -107,62 +100,43 @@ def analyze_extended_metrics(gdsc_values, loss_topo_values):
     plt.show()
 
 def analyze_gdsc_topo_loss(model, data_loader, device, prior):
-    """
-    For each sample, compute gDSC and topological loss (L_topo) by calling
-    multi_class_topological_post_processing. Then normalize and plot.
-    """
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from scipy.stats import pearsonr, spearmanr
-
-    def normalize_metric(values):
-        min_val, max_val = np.min(values), np.max(values)
-        if max_val == min_val:
-            return np.zeros_like(values)
-        return (values - min_val) / (max_val - min_val)
-
+    """Analyze relationship between gDSC and topological loss"""
     model.eval()
-    gdsc_scores, topo_losses = [], []
+    results = []
 
-    with torch.no_grad():
-        for images, masks in data_loader:
-            images, masks = images.to(device), masks.to(device)
-
-            # Compute gDSC
+    for images, masks in data_loader:
+        images, masks = images.to(device), masks.to(device)
+        
+        # Compute gDSC
+        with torch.no_grad():
             outputs = model(images)
             pred_probs = torch.softmax(outputs, dim=1).cpu().numpy()
-            masks_np = masks.cpu().numpy()
-            gdsc_mean, _ = generalized_dice(pred_probs, masks_np)
-            gdsc_scores.append(gdsc_mean)
+            gdsc_mean, _ = generalized_dice(pred_probs, masks.cpu().numpy())
 
-            # Derive topological loss from multi_class_topological_post_processing
-            # Assuming we modify it to return (model_topo, topological_loss)
-            _, loss_topo_val = multi_class_topological_post_processing(
-                inputs=images, model=model, prior=prior,
-                lr=0.001, mse_lambda=1000,
-                opt=torch.optim.Adam, num_its=100, construction='0', thresh=None, parallel=False
-            )
-            # Store the computed topological loss
-            topo_losses.append(loss_topo_val)
-
-    # Normalize
-    gdsc_arr = np.array(gdsc_scores)
-    topo_arr = np.array(topo_losses)
-    gdsc_norm = normalize_metric(gdsc_arr)
-    topo_norm = normalize_metric(topo_arr)
-
-    # Compute correlations
-    pearson_corr, _ = pearsonr(gdsc_arr, topo_arr)
-    spearman_corr, _ = spearmanr(gdsc_arr, topo_arr)
-    print(f"Pearson correlation (gDSC vs. L_topo): {pearson_corr:.3f}")
-    print(f"Spearman correlation (gDSC vs. L_topo): {spearman_corr:.3f}")
-
-    # Scatter plot
+        # Get topological loss
+        _, loss_topo_val = multi_class_topological_post_processing(
+            inputs=images, 
+            model=model, 
+            prior=prior,
+            lr=0.001, 
+            mse_lambda=1000, 
+            num_its=100, 
+            construction='0'
+        )
+        
+        results.append((gdsc_mean, loss_topo_val))
+    
+    # Analyze results
+    gdsc_scores, topo_losses = zip(*results)
+    correlation, _ = pearsonr(gdsc_scores, topo_losses)
+    print(f"Correlation between gDSC and L_topo: {correlation:.3f}")
+    
+    # Visualize
     plt.figure(figsize=(6,5))
-    plt.scatter(topo_norm, gdsc_norm, c='blue', alpha=0.7)
-    plt.title("Normalized L_topo vs. Normalized gDSC")
-    plt.xlabel("L_topo (normalized)")
-    plt.ylabel("gDSC (normalized)")
+    plt.scatter(topo_losses, gdsc_scores, alpha=0.7)
+    plt.xlabel("Topological Loss")
+    plt.ylabel("gDSC Score")
+    plt.title("Relationship between Topological Loss and gDSC")
     plt.grid(True)
     plt.show()
 
@@ -179,7 +153,7 @@ def run_analysis_with_model(model, data_loader, device):
     with torch.no_grad():
         for images, masks in data_loader:
             images, masks = images.to(device), masks.to(device)
-            outputs = model(images)  # shape (B, C, H, W)
+            outputs = model(images)  # ...existing code...
             pred_probs = torch.softmax(outputs, dim=1).cpu().numpy()
             masks_np = masks.cpu().numpy()
 
@@ -194,7 +168,7 @@ def run_analysis_with_model(model, data_loader, device):
             # Replace with actual logic for multi-class Betti calculations if needed.
             pred_binary = (pred_probs.argmax(axis=1) > 0).astype(int)
             true_binary = (masks_np > 0).astype(int)
-            be = betti_error(pred_binary, true_binary)  # updated with real betti calculation
+            be = betti_error(pred_binary, true_binary)  # ...existing code...
             ts = topological_success(be)
 
             betti_errors.append(be)
@@ -231,6 +205,7 @@ def main():
     
     model.load_state_dict(checkpoint['model_state_dict'])
     _, image_paths, label_paths = get_patient_data(args.data_path)
+    # ...existing code...
     # Specify fixed size (224, 224) for both input and output
     dataset = TopoACDCDataset(image_paths, label_paths, size=(224, 224))
     dataloader = DataLoader(dataset, args.batch_size, shuffle=False)

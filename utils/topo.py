@@ -90,9 +90,11 @@ def multi_class_topological_post_processing(
     else:
         roi = [slice(None, None)] + [slice(None, None) for dim in range(len(spatial_xyz))]
     
-    # Initialise topological model and optimiser
+    # Initialize model and enable gradients
     model_topo = copy.deepcopy(model)
-    model_topo.eval()
+    model_topo.train()  # Set to train mode for gradient computation
+    for param in model_topo.parameters():
+        param.requires_grad = True
     optimiser = opt(model_topo.parameters(), lr=lr)
     
     # Inspect prior and convert to tensor
@@ -111,8 +113,8 @@ def multi_class_topological_post_processing(
         outputs = torch.softmax(model_topo(inputs), 1).squeeze()
         outputs_roi = outputs[roi]
 
-        # Build class/combination-wise (c-wise) image tensor for prior
-        combos = torch.stack([outputs_roi[c.T].sum(0) for c in prior.keys()])
+        # Build class/combination-wise (c-wise) image tensor for prior with gradients
+        combos = torch.stack([outputs_roi[c.T].sum(0) for c in prior.keys()]).requires_grad_(True)
 
         # Invert probababilistic fields for consistency with cripser sub-level set persistence
         combos = 1 - combos
