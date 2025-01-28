@@ -23,14 +23,18 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Test trained UNet model on ACDC dataset')
     parser.add_argument('--test_dir', type=str, default='data/preprocessed/test',
                         help='Directory containing test data')
-    parser.add_argument('--experiment_dir', type=str, required=True,
-                        help='Directory containing the trained model')
+    parser.add_argument('--model_path', type=str, required=True,
+                        help='Path to the trained model .pth file')
+    parser.add_argument('--results_dir', type=str, default='test_results',
+                        help='Directory to save results')
     parser.add_argument('--batch_size', type=int, default=1,
                         help='Batch size for testing')
     parser.add_argument('--save_visualizations', action='store_true',
                         help='Save segmentation visualizations')
     parser.add_argument('--apply_cca', action='store_true',
                         help='Apply Connected Component Analysis post-processing')
+    parser.add_argument('--description', type=str, default='',
+                        help='Description of the test run')
     return parser.parse_args()
 
 def save_segmentation_visualization(image, true_mask, pred_mask, save_path):
@@ -211,11 +215,13 @@ def pretty_print_metrics(results):
     print(f"Topological Success Rate: {results['topological_success_rate']:.3f}")
     print(f"Betti Error Percentiles [98th, 99th, 100th]: [{', '.join(f'{x:.3f}' for x in results['betti_percentiles'])}]")
 
-def save_detailed_results(results, results_dir, apply_cca):
+def save_detailed_results(results, results_dir, apply_cca, description):
     """Save detailed results to a formatted text file by appending"""
     with open(os.path.join(results_dir, 'detailed_metrics.txt'), 'a') as f:
         f.write("\n" + "="*50 + "\n")  # Separator between runs
         f.write(f"Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        if description:
+            f.write(f"Description: {description}\n")
         f.write("=== ACDC Cardiac Segmentation Results ===\n")
         f.write(f"Post-processing: {'CCA' if apply_cca else 'None'}\n\n")
         
@@ -246,7 +252,7 @@ def save_detailed_results(results, results_dir, apply_cca):
         f.write(f"Topological Success Rate: {results['topological_success_rate']:.3f}\n")
         f.write(f"Betti Error Percentiles [98th, 99th, 100th]: [{', '.join(f'{x:.3f}' for x in results['betti_percentiles'])}]\n")
 
-def test_model(model, test_loader, device, results_dir, save_visualizations, apply_cca):
+def test_model(model, test_loader, device, results_dir, save_visualizations, apply_cca, description):
     """Modified test_model function with improved reporting"""
     criterion = torch.nn.CrossEntropyLoss()
     results = evaluate_model(model, test_loader, device, criterion, apply_cca)
@@ -271,7 +277,7 @@ def test_model(model, test_loader, device, results_dir, save_visualizations, app
     
     # Print and save detailed results
     pretty_print_metrics(results)
-    save_detailed_results(results, results_dir, apply_cca)
+    save_detailed_results(results, results_dir, apply_cca, description)
     
     return results
 
@@ -285,8 +291,7 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
     
     # Load model
-    model_path = os.path.join(args.experiment_dir, 'models', 'best_model.pth')
-    checkpoint = torch.load(model_path)
+    checkpoint = torch.load(args.model_path)
     
     model = UNet(
         in_channels=1,
@@ -301,18 +306,20 @@ def main():
     model.load_state_dict(checkpoint['model_state_dict'])
     
     # Create results directory
-    results_dir = os.path.join(args.experiment_dir, 'test_results')
-    os.makedirs(results_dir, exist_ok=True)
+    os.makedirs(args.results_dir, exist_ok=True)
     
     # Test model
-    results = test_model(model, test_loader, device, results_dir, 
-                        args.save_visualizations, args.apply_cca)
+    results = test_model(model, test_loader, device, args.results_dir, 
+                        args.save_visualizations, args.apply_cca, args.description)
     
     # Save results by appending
-    metrics_file = os.path.join(results_dir, 'metrics.txt')
+    metrics_file = os.path.join(args.results_dir, 'metrics.txt')
     with open(metrics_file, 'a') as f:
-        f.write("\n" + "="*50 + "\n")  # Separator between runs
+        f.write("\n" + "="*50 + "\n")
         f.write(f"Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        if args.description:
+            f.write(f"Description: {args.description}\n")
+        f.write(f"Model: {args.model_path}\n")
         f.write(f"Post-processing: {'CCA' if args.apply_cca else 'None'}\n")
         for metric, value in results.items():
             f.write(f'{metric}: {value}\n')
