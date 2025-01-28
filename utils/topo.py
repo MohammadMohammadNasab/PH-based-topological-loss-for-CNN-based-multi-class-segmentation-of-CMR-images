@@ -149,10 +149,10 @@ def multi_class_topological_post_processing(
 
         # Get similarity constraint
         mse = F.mse_loss(outputs, pred_unet)
-
+        loss_topo  = A  + Z
         # Optimisation
-        loss = A + Z + mse_lambda * mse
+        loss = loss_topo + mse_lambda * mse
         loss.backward()
         optimiser.step()
 
-    return model_topo
+    return model_topo, loss_topo.item()
