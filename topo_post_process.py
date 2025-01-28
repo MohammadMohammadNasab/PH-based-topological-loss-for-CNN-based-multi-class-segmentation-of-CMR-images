@@ -30,8 +30,8 @@ parser.add_argument('--model_path', type=Path, required=True,
                     help='Full path to the pre-trained model weights (e.g., /path/to/model/weights.tar)')
 parser.add_argument('--save_path', type=Path, required=True,
                     help='Full path where to save the post-processed model (e.g., /path/to/save/model_topo.tar)')
-parser.add_argument('--multi_class', action='store_true', default=True,
-                    help='Whether to use multi-class processing (default: True)')
+parser.add_argument('--multi_class', action='store_true',
+                    help='Whether to use multi-class processing')
 
 args = parser.parse_args()
 
