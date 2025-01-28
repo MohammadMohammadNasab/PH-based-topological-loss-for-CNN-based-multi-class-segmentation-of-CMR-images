@@ -39,8 +39,6 @@ args = parser.parse_args()
 if not args.model_path.exists():
     raise FileNotFoundError(f"Model file not found at: {args.model_path}")
 
-# Create save directory if it doesn't exist
-args.save_path.parent.mkdir(parents=True, exist_ok=True)
 
 # %% [markdown]
 # ## Setting
@@ -120,7 +118,7 @@ model_TP = multi_class_topological_post_processing(
 # Replace the simple model saving with more detailed version
 torch.save({
     'model_state_dict': model_TP.state_dict()
-    }, args.save_path.parent / ('multi_class_topo.pth' if MULTI_CLASS else 'single_class_topo.pth'))
+    }, args.save_path / ('multi_class_topo.pth' if MULTI_CLASS else 'single_class_topo.pth'))
 
 
 # %% [markdown]
