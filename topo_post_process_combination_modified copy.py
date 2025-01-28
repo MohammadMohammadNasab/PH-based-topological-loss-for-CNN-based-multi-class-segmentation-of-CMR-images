@@ -13,34 +13,15 @@
 # Please be sure to install the necessary pre-requisites listed in the respository __[readme](https://github.com/nick-byrne/topological-losses/blob/main/README.md#setup)__, and register your device for tensor operations in the cell below.
 
 # %%
-import argparse
-import numpy as np
 import torch
-import matplotlib.pyplot as plt
-from utils.topo import get_differentiable_barcode, multi_class_topological_post_processing
+import tqdm
+from utils.topo import  multi_class_topological_post_processing
 from unet import UNet
-import datetime
-from pathlib import Path
+from torch.utils.data import DataLoader
+from utils.dataloading import TopoACDCDataset, get_patient_data
+import copy
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-# Add argument parser
-parser = argparse.ArgumentParser(description='Topological post-processing for segmentation')
-parser.add_argument('--model_path', type=Path, required=True,
-                    help='Full path to the pre-trained model weights (e.g., /path/to/model/weights.tar)')
-parser.add_argument('--save_path', type=Path, required=True,
-                    help='Full path where to save the post-processed model (e.g., /path/to/save/model_topo.tar)')
-parser.add_argument('--multi_class', action='store_true', default=True,
-                    help='Whether to use multi-class processing (default: True)')
-
-args = parser.parse_args()
-
-# Validate paths
-if not args.model_path.exists():
-    raise FileNotFoundError(f"Model file not found at: {args.model_path}")
-
-# Create save directory if it doesn't exist
-args.save_path.parent.mkdir(parents=True, exist_ok=True)
 
 # %% [markdown]
 # ## Setting
@@ -55,29 +36,22 @@ args.save_path.parent.mkdir(parents=True, exist_ok=True)
 
 # %%
 # Get example image, resample and normalise
-image = torch.load(Path('data/post_topo_adaption/image.pt')).unsqueeze(0).unsqueeze(0).to(device)
-label = torch.load(Path('data/post_topo_adaption/label.pt'))
 
+# Replace image loading section with DataLoader
 
-# Replace the MULTI_CLASS variable with args
-MULTI_CLASS = args.multi_class
+patient_dict, images_paths, labels_paths = get_patient_data('data/preprocessed/test')
+dataset = TopoACDCDataset(images_paths, labels_paths)
+dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
 # Set prior: class 1 is RV; 2 is MY; 3 is LV
-if MULTI_CLASS:
-    prior = {
-        (1,):   (1, 0),
-        (2,):   (1, 1),
-        (3,):   (1, 0),
-        (1, 2): (1, 1),
-        (1, 3): (2, 0),
-        (2, 3): (1, 0)
-    }
-else:
-    prior = {
-        (1,):   (1, 0),
-        (2,):   (1, 1),
-        (3,):   (1, 0),
-    }
+prior = {
+    (1,):   (1, 0),
+    (2,):   (1, 1),
+    (3,):   (1, 0),
+    (1, 2): (1, 1),
+    (1, 3): (2, 0),
+    (2, 3): (1, 0)
+}
 
 # %% [markdown]
 # ## U-Net
@@ -97,55 +71,31 @@ model = UNet(
 )
 
 # Load pre-trained weights and move model to device (GPU recommended)
-# Update model loading to use args.model_path
-model_checkpoint = torch.load(args.model_path, map_location=device)
+model_checkpoint = torch.load(r'C:\Users\Mohammad\Desktop\ML_Project\Experiments\experiment_7\models\best_model.pth', map_location=device)
 model.load_state_dict(model_checkpoint['model_state_dict'])
 model = model.to(device)
 
-# %% [markdown]
-# ## Test time adaptation by topological post-processing
-# 
-# In this example, we seek to adapt the weights achieved by conventional pre-training using our multi-class, PH-based topological losses. Having been optimised only for our particular test image, we do expect learned features to generalise to other patients or data.
-# 
-# *NB - Our* `topological_post_processing` *function provides an optional argument to extract the features of the PH in parallel using `multiprocessing`. Note that in this 2D case, the computational cost of establishing multiple processes exceeds that of serial execution.*
-
-# %%
-# Run topological post-processing
-model_TP = multi_class_topological_post_processing(
-    inputs=image, model=model, prior=prior,
-    lr=1e-5, mse_lambda=1000,
-    opt=torch.optim.Adam, num_its=100, construction='0', thresh=0.5, parallel=False
-)
-
-# Replace the simple model saving with more detailed version
-torch.save({
-    'model_state_dict': model_TP.state_dict()
-    }, args.save_path + 'multi_class_topo.pth' if MULTI_CLASS else 'single_class_topo.pth')
-
-
-# %% [markdown]
-# ## Results
-# 
-# Run the cell below to examine the results. They demonstrate:
-# 
-# - The propensity of conventionally trained segmentation CNNs (U-Net) to make predictions that lack anatomical coherence (left hand plot).
-# - The rectification of such errors by test time adaptation by topological post-processing (TP, right hand plot).
-
-# %%
-# View results
-pred_unet = torch.softmax(model(image), 1).squeeze().argmax(0).cpu().numpy()
-pred_topo = torch.softmax(model_TP(image), 1).squeeze().argmax(0).cpu().numpy()
-
-f, ax = plt.subplots(1, 2, figsize=[16, 8])
-for a in ax:
-    a.imshow(image.cpu().numpy().squeeze(), cmap='gray')
-    a.set_xticks([])
-    a.set_yticks([])
-    plt.setp(a.spines.values(), color=None)
-
-ax[0].imshow(pred_unet, alpha=0.5)
-ax[0].set_xlabel('U-Net prediction', size=12)
-ax[1].imshow(pred_topo, alpha=0.5)
-ax[1].set_xlabel('U-Net prediction after TP', size=12)
+# Process each batch
+for images, labels in tqdm.tqdm(dataloader):
+    images = images.to(device)
+    labels = labels.to(device)
+    
+    # Create a fresh copy of the original model for this batch
+    # This ensures we start from original weights for each new image
+    model_TP = copy.deepcopy(model)
+    
+    # Apply topological post-processing to the copied model
+    model_TP = multi_class_topological_post_processing(
+        inputs=images, 
+        model=model_TP,
+        prior=prior,
+        lr=1e-5, 
+        mse_lambda=1000,
+        opt=torch.optim.Adam, 
+        num_its=100, 
+        construction='0', 
+        thresh=0.5, 
+        parallel=False
+    )
 
 

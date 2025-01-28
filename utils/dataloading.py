@@ -162,6 +162,35 @@ class ValACDCDataset(Dataset):
 
         return cropped_image_tensor, cropped_label_tensor
 
+class TopoACDCDataset(Dataset):
+    def __init__(self, images, labels):
+        # data_dict is the dictionary returned by get_patient_data
+        self.images_paths = images
+        self.label_paths = labels
+
+    def __len__(self):
+        return len(self.images_paths)
+
+    def __getitem__(self, idx):
+        img_path = self.images_paths[idx]
+        lbl_path = self.label_paths[idx]
+
+        image = np.load(img_path)
+        label = np.load(lbl_path)
+        
+
+        # Convert the image to a PyTorch tensor
+        image_tensor = torch.tensor(image, dtype=torch.float32)
+
+        
+        image_tensor = image_tensor.unsqueeze(0)
+
+        # Convert the label to a PyTorch tensor
+        label_tensor = torch.tensor(label, dtype=torch.long)
+
+
+        return image_tensor, label_tensor
+
 
 
 
