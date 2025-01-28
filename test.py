@@ -4,7 +4,7 @@ import torch
 import numpy  as np
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
-from baseline_improvement.CCA import connected_component_analysis
+from utils.CCA import connected_component_analysis
 from unet import UNet
 from utils.metrics import generalized_dice, dice_coefficient, hausdorff_distance
 from utils.dataloading import get_patient_data, ValACDCDataset
