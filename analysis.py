@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from utils.dataloading import TopoACDCDataset, get_patient_data
 from unet import UNet
 from utils.metrics import generalized_dice, betti_error, topological_success
-from utils.topo import multi_class_topological_post_processing
+from utils.topo import topo_loss_calc
 
 def normalize_metric(values):
     # ...existing code...
@@ -114,14 +114,10 @@ def analyze_gdsc_topo_loss(model, data_loader, device, prior):
             gdsc_mean, _ = generalized_dice(pred_probs, masks.cpu().numpy())
 
         # Get topological loss
-        _, loss_topo_val = multi_class_topological_post_processing(
+        loss_topo_val = topo_loss_calc(
             inputs=images, 
             model=model, 
             prior=prior,
-            lr=0.001, 
-            mse_lambda=1000, 
-            num_its=100, 
-            construction='0'
         )
         
         results.append((gdsc_mean, loss_topo_val))

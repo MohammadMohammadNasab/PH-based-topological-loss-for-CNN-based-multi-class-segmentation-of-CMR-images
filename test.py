@@ -1,5 +1,7 @@
 import argparse
 import os
+
+import tqdm
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -45,6 +47,7 @@ def parse_args():
 def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply_topo=False):
     """Evaluates the model with additional post-processing options."""
     model.eval()
+    print(device)
     total_ce_loss = 0
     all_predictions = []
     all_targets = []
@@ -53,7 +56,7 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
     all_betti = []
 
     with torch.no_grad():
-        for images, masks in test_loader:
+        for images, masks in tqdm.tqdm(test_loader, total=len(test_loader)):
             images, masks = images.to(device), masks.to(device)
             outputs = model(images)
 
