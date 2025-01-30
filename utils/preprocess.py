@@ -92,9 +92,11 @@ def preprocess_case(image_path, label_path, output_dir, target_spacing=(1.25, 1.
         np.save(os.path.join(patient_dir, lbl_filename), lbl_slices[i])
 # Example usage
 import glob
-data_dir = 'data/database/testing'
-# Create output directory
-output_dir = "data/preprocessed/test_and_val"
+data_dir = 'data/database/train'
+
+# Create output directory change as you want
+output_dir = "data/preprocessed/train"
+
 os.makedirs(output_dir, exist_ok=True)
 
 # Get all image files (adjust path as needed)
