@@ -1,30 +1,33 @@
-from skimage.measure import label
 import numpy as np
+from scipy.ndimage import label
 
-def connected_component_analysis(pred_mask, connectivity):
+def connected_component_analysis(mask, connectivity=4):
     """
-    Keep only the largest connected component in the predicted mask.
-    
-    Args:
-        pred_mask (np.ndarray): Binary predicted mask of shape (H, W)
-    
-    Returns:
-        np.ndarray: Mask with only the largest connected component
+    Retains only the largest connected component in a 2D binary mask.
+
+    :param mask: 2D numpy array (binary mask)
+    :param connectivity: 4 for 4-connected, 8 for 8-connected
+    :return: 2D numpy array with only the largest component
     """
+    # Define connectivity structure
+    if connectivity == 4:
+        struct = np.array([[0, 1, 0],
+                           [1, 1, 1],
+                           [0, 1, 0]])  # 4-connected
+    else:
+        struct = np.ones((3, 3), dtype=int)  # 8-connected
+
     # Label connected components
-    labeled_mask = label(pred_mask, connectivity)
+    labeled_mask, num_components = label(mask, structure=struct)
 
-    # If no components detected, return original mask
-    if labeled_mask.max() == 0:
-        return np.zeros_like(pred_mask, dtype=np.uint8)
+    if num_components == 0:
+        return mask  # No components found, return the original mask
 
-    # Compute component sizes (ignore background, which is label 0)
-    component_sizes = np.bincount(labeled_mask.ravel(), minlength=labeled_mask.max() + 1)[1:]
-
-    # Get the largest connected component label
-    largest_label = np.argmax(component_sizes) + 1
+    # Find the largest component
+    component_sizes = np.bincount(labeled_mask.ravel())[1:]  # Ignore background count (index 0)
+    largest_component = np.argmax(component_sizes) + 1  # Component indices start from 1
 
     # Create a mask with only the largest component
-    largest_component = (labeled_mask == largest_label).astype(np.uint8)
+    largest_mask = (labeled_mask == largest_component).astype(np.uint8)
 
-    return largest_component
+    return largest_mask
