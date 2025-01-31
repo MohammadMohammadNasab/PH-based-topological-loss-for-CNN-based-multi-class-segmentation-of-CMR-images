@@ -17,7 +17,7 @@ import argparse
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-from utils.topo import get_differentiable_barcode, multi_class_topological_post_processing
+from topo import get_differentiable_barcode, multi_class_topological_post_processing
 from unet import UNet
 import datetime
 from pathlib import Path

@@ -6,11 +6,11 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
-from utils.CCA import connected_component_analysis
+from CCA import connected_component_analysis
 from unet import UNet
 from utils.metrics import generalized_dice, dice_coefficient, hausdorff_distance, betti_error, topological_success
 from utils.dataloading import get_patient_data, ValACDCDataset
-from utils.topo import multi_class_topological_post_processing
+from topo import multi_class_topological_post_processing
 import datetime
 
 CLASS_LABELS = {0: 'Background', 1: 'RV', 2: 'MY', 3: 'LV'}
