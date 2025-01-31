@@ -74,11 +74,11 @@ def multi_class_topological_post_processing(
     if thresh:
         roi = get_roi(pred_unet[1:].sum(0).squeeze(), thresh)
     else:
-        roi = [slice(None, None)] + [slice(None, None) for dim in range(len(spatial_xyz))]
-    
-    # Initialise topological model and optimiser
+        roi = [slice(None, None)] + [slice(None, None) for _ in range(inputs.ndim - 2)]
+
+    # Create a copy of the model for optimization
     model_topo = copy.deepcopy(model)
-    model_topo.eval()
+    model_topo.train()
     optimiser = opt(model_topo.parameters(), lr=lr)
 
     # Convert prior to tensor
@@ -95,8 +95,9 @@ def multi_class_topological_post_processing(
         outputs = torch.softmax(model_topo(inputs), 1).squeeze()
         outputs_roi = outputs[roi]
 
-        # Build class/combination-wise (c-wise) image tensor for prior
+        # Construct probability fields per class
         combos = torch.stack([outputs_roi[c.T].sum(0) for c in prior.keys()])
+        combos = 1 - combos  # Invert for sub-level set persistence computation
 
         # Compute persistence barcodes
         combos_arr = combos.detach().cpu().numpy().astype(np.float64)
@@ -127,14 +128,18 @@ def multi_class_topological_post_processing(
         # Compute persistence losses
         A = (1 - bcodes[matching]).sum()
         Z = bcodes[~matching].sum()
-        mse = torch.nn.functional.mse_loss(outputs, pred_unet)
-
-        # Get similarity constraint
+        A = A.requires_grad_()
+        Z = Z.requires_grad_()
+        # Compute similarity loss
         mse = F.mse_loss(outputs, pred_unet)
-
-        # Optimisation
+        mse = mse.requires_grad_()
+        # Total loss and optimization step
         loss = A + Z + mse_lambda * mse
+        loss = loss.requires_grad_()
         loss.backward()
         optimiser.step()
 
-    return model_topo
+    # Get final refined predictions
+    final_outputs = torch.softmax(model_topo(inputs), 1).detach()
+    
+    return final_outputs  # Return refined segmentation output (logits)
