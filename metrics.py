@@ -2,7 +2,7 @@ import numpy as np
 from scipy.spatial.distance import directed_hausdorff
 from scipy.stats import wilcoxon
 import gudhi
-
+import torch
 # Dice Similarity Coefficient (DSC)
 def dice_coefficient(y_pred, y_true, default_value=0.0):
     """
@@ -28,35 +28,39 @@ def dice_coefficient(y_pred, y_true, default_value=0.0):
     intersection = np.sum(y_pred * y_true)
     return 2.0 * intersection / (pred_sum + true_sum)
 
-# Generalized Dice Similarity Coefficient (gDSC)
-def generalized_dice(y_preds, y_trues, epsilon=1e-7):
+def generalized_dice(pred, target, num_classes=4, epsilon=1e-6):
     """
-    Calculate generalized dice score.
-    
+    Compute the Generalized Dice Similarity Coefficient (gDSC) for multi-class segmentation.
+
     Args:
-        y_preds: predictions of shape (B, C, H, W) - softmax probabilities
-        y_trues: ground truth of shape (B, H, W) with class indices
-        epsilon: small constant to avoid division by zero
-    
+        pred (torch.Tensor): Predicted segmentation (B, C, H, W) as one-hot encoded or softmax.
+        target (torch.Tensor): Ground truth segmentation (B, C, H, W) as one-hot encoded.
+        num_classes (int): Number of classes.
+        epsilon (float): Small value to prevent division by zero.
+
     Returns:
-        tuple (mean_dice, class_dice) where class_dice is array of dice scores per class
+        gDSC (float): Generalized Dice Score
+        class_gDSC (list): Per-class Dice Scores
     """
-    n_classes = y_preds.shape[1]
-    
-    # Convert y_trues to one-hot encoding
-    y_trues_one_hot = np.zeros_like(y_preds)
-    for i in range(n_classes):
-        y_trues_one_hot[:, i, ...] = (y_trues == i)
-    
-    # Calculate intersection and union
-    intersection = np.sum(y_preds * y_trues_one_hot, axis=(0, 2, 3))
-    union = np.sum(y_preds, axis=(0, 2, 3)) + np.sum(y_trues_one_hot, axis=(0, 2, 3))
-    
-    # Calculate dice score for each class
-    class_dice = (2.0 * intersection + epsilon) / (union + epsilon)
-    mean_dice = np.mean(class_dice)
-    
-    return mean_dice, class_dice
+    pred_flat = pred.view(num_classes, -1)  # Flatten across batch and spatial dims
+    target_flat = target.view(num_classes, -1)
+
+    # Compute per-class weights (inversely proportional to class volume)
+    class_weights = 1.0 / (torch.sum(target_flat, dim=1) ** 2 + epsilon)
+
+    # Compute intersection
+    intersection = 2 * torch.sum(target_flat * pred_flat, dim=1)
+
+    # Compute denominator
+    denominator = torch.sum(target_flat, dim=1) + torch.sum(pred_flat, dim=1) + epsilon
+
+    # Compute per-class DSC
+    class_dice = intersection / denominator
+
+    # Compute weighted sum for gDSC
+    gDSC = torch.sum(class_weights * intersection) / torch.sum(class_weights * denominator)
+
+    return gDSC.item(), class_dice.tolist()
 
 # Hausdorff Distance (HDD)
 def hausdorff_distance(y_pred, y_true, default_value=float('inf')):
