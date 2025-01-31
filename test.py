@@ -54,19 +54,19 @@ def compute_percentiles(data, percentiles=[25, 50, 75]):
 
 # **Updated Evaluate Model Function**
 def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply_topo=False, multi_class=False):
-    """Evaluates the model with additional post-processing options."""
     model.eval()
     print(device)
 
     total_ce_loss = 0
     all_predictions = []
     all_targets = []
-    all_hdd = [[] for _ in range(4)]  # Store HDD per class
-    all_dsc = [[] for _ in range(4)]  # Store DSC per class
+    all_hdd = [[] for _ in range(4)]  
+    all_dsc = [[] for _ in range(4)]  
+    all_gdsc = []  # Add this line to store generalized dice scores
     all_betti = []
-    all_topological_success = []  # Store Topological Success Rate per image
+    all_topological_success = []  
 
-    priors = get_priors(multi_class)  # Set priors dynamically
+    priors = get_priors(multi_class)
 
     with torch.no_grad():
         for images, masks in tqdm.tqdm(test_loader, total=len(test_loader)):
@@ -78,8 +78,12 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
             total_ce_loss += ce_loss.item()
 
             # Convert predictions
-            pred_probs = torch.softmax(outputs, dim=1)  # Shape: (B, C, H, W)
-            pred_labels = torch.argmax(pred_probs, dim=1)  # Shape: (B, H, W)
+            pred_probs = torch.softmax(outputs, dim=1)
+            pred_labels = torch.argmax(pred_probs, dim=1)
+
+            # Calculate generalized dice score
+            gdsc, gdsc_per_class = generalized_dice(pred_probs, masks)
+            all_gdsc.append(gdsc)
 
             # Convert to numpy
             pred_probs_np = pred_probs.cpu().numpy()
@@ -92,7 +96,7 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
                     for batch_idx in range(pred_labels_np.shape[0]):
                         class_mask = (pred_labels_np[batch_idx] == class_idx)
                         if class_mask.any():
-                            processed_mask = connected_component_analysis(class_mask)
+                            processed_mask = connected_component_analysis(class_mask, connectivity=1)
                             pred_labels_np[batch_idx][class_mask] = 0  # Clear original
                             pred_labels_np[batch_idx][processed_mask == 1] = class_idx
 
@@ -141,9 +145,6 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
                 # ✅ Compute Topological Success Rate
                 all_topological_success.append(topological_success(pred_betti))  # Compute TSR
 
-    # **Compute Mean CE Loss**
-    mean_ce_loss = total_ce_loss / len(test_loader)
-
     # **Compute Percentiles**
     hdd_percentiles = [compute_percentiles(class_hdds, [25, 50, 75]) for class_hdds in all_hdd]
     dsc_percentiles = [compute_percentiles(class_dscs, [25, 50, 75]) for class_dscs in all_dsc]
@@ -152,13 +153,16 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
     mean_tsr = np.mean(all_topological_success)
     std_tsr = np.std(all_topological_success)
 
+    # Update results dictionary to include generalized dice metrics
     results = {
-        'ce_loss': mean_ce_loss,
+        'ce_loss': total_ce_loss / len(test_loader),
+        'gdsc_mean': np.mean(all_gdsc),
+        'gdsc_std': np.std(all_gdsc),
         'hdd_percentiles': hdd_percentiles,
         'dsc_percentiles': dsc_percentiles,
         'betti_error_percentiles': betti_percentiles,
-        'topological_success_rate': mean_tsr,  # Mean TSR
-        'std_topological_success_rate': std_tsr,  # STD of TSR
+        'topological_success_rate': mean_tsr,
+        'std_topological_success_rate': std_tsr,
     }
     return results
 

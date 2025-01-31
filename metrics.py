@@ -33,34 +33,38 @@ def generalized_dice(pred, target, num_classes=4, epsilon=1e-6):
     Compute the Generalized Dice Similarity Coefficient (gDSC) for multi-class segmentation.
 
     Args:
-        pred (torch.Tensor): Predicted segmentation (B, C, H, W) as one-hot encoded or softmax.
-        target (torch.Tensor): Ground truth segmentation (B, C, H, W) as one-hot encoded.
-        num_classes (int): Number of classes.
+        pred (torch.Tensor): Predicted segmentation (B, C, H, W) as softmax output.
+        target (torch.Tensor): Ground truth segmentation (B, H, W) as class index map.
+        num_classes (int): Number of segmentation classes.
         epsilon (float): Small value to prevent division by zero.
 
     Returns:
         gDSC (float): Generalized Dice Score
         class_gDSC (list): Per-class Dice Scores
     """
-    pred_flat = pred.view(num_classes, -1)  # Flatten across batch and spatial dims
-    target_flat = target.view(num_classes, -1)
+    # Ensure target is one-hot encoded
+    target_one_hot = torch.nn.functional.one_hot(target, num_classes=num_classes).permute(0, 3, 1, 2).float()
 
-    class_weights = 1.0 / (torch.sum(target_flat, dim=1) + epsilon)
+    # Flatten along spatial dimensions
+    pred_flat = pred.view(pred.shape[0], num_classes, -1)  # (B, C, H*W)
+    target_flat = target_one_hot.view(target_one_hot.shape[0], num_classes, -1)
+
+    # Compute class weights (Inverse squared frequency)
+    class_weights = 1.0 / (torch.sum(target_flat, dim=2) ** 2 + epsilon)
 
     # Compute intersection
-    intersection = 2 * torch.sum(target_flat * pred_flat, dim=1)
+    intersection = 2 * torch.sum(target_flat * pred_flat, dim=2)
 
     # Compute denominator
-    denominator = torch.sum(target_flat, dim=1) + torch.sum(pred_flat, dim=1) + epsilon
+    denominator = torch.sum(target_flat, dim=2) + torch.sum(pred_flat, dim=2) + epsilon
 
     # Compute per-class DSC
-    class_dice = intersection / denominator
+    class_dice = intersection / denominator  # Shape: (B, C)
 
-    # Compute weighted sum for gDSC
-    gDSC = torch.sum(class_weights * intersection) / torch.sum(class_weights * denominator)
+    # Compute weighted sum for generalized DSC
+    gDSC = torch.sum(class_weights * intersection, dim=1) / torch.sum(class_weights * denominator, dim=1)
 
-    return gDSC.item(), class_dice.tolist()
-
+    return gDSC.mean().item(), class_dice.mean(dim=0).tolist()
 # Hausdorff Distance (HDD)
 def hausdorff_distance(y_pred, y_true, default_value=float('inf')):
     """
