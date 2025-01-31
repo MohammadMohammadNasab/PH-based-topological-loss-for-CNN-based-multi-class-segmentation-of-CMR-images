@@ -91,7 +91,8 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
                     input_single = images[i].unsqueeze(0).to(device)
 
                     refined_output = multi_class_topological_post_processing(
-                        input_single, model, prior, lr=1e-5, mse_lambda=1.0
+                        input_single, model, prior, lr=1e-5, mse_lambda=1000,
+                        num_its=100, thresh=0.5, parallel=True
                     )
 
                     processed_outputs.append(refined_output.to(device))
