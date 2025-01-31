@@ -62,29 +62,29 @@ def apply_cca(segmentation_map):
 
 def apply_topo(image, model, device, prior):
     input_tensor = image.unsqueeze(0).to(device)  # Add batch dimension
-    refined_output = multi_class_topological_post_processing(
+    model_topo = multi_class_topological_post_processing(
         input_tensor, model, prior, lr=1e-3, num_its=100, mse_lambda=1000
     )
+    refined_output = model_topo(input_tensor)
     pred_probs = torch.softmax(refined_output, dim=1)
-    pred_labels = torch.argmax(pred_probs, dim=1).squeeze(0).cpu().numpy()
+    pred_labels = torch.argmax(pred_probs, dim=1).squeeze(0).detach().cpu().numpy()
     return pred_labels
 
 # **Plot the Results**
-def plot_results(original_image, segmentations, output_path):
-    titles = ["1 No Post-Processing", "2️ CCA Applied", "3️ Topo (Single Class)", "4️ Topo (Multi-Class)"]
+def plot_results(image, segmentations, output_path):
+    titles = ["True label","1 No Post-Processing", "2️ CCA Applied", "3️ Topo (Single Class)", "4️ Topo (Multi-Class)"]
     
-    fig, axes = plt.subplots(1, 5, figsize=(20, 5))
+    fig, axes = plt.subplots(1, len(segmentations), figsize=(20, 5))
     
-    # Original Image
-    axes[0].imshow(original_image, cmap="gray")
-    axes[0].set_title("🖼️ Original Image")
-    axes[0].axis("off")
-    
+    for a in axes:
+        a.imshow(image.squeeze(), cmap='gray')
+        a.set_xticks([])
+        a.set_yticks([])
+        plt.setp(a.spines.values(), color=None)
     # Segmentation Maps
-    for i in range(4):
-        axes[i + 1].imshow(segmentations[i], cmap="nipy_spectral")
+    for i in range(len(segmentations)):
+        axes[i + 1].imshow(segmentations[i], alpha =0.5)
         axes[i + 1].set_title(titles[i])
-        axes[i + 1].axis("off")
     
     plt.tight_layout()
     plt.savefig(output_path)
@@ -99,7 +99,6 @@ def main():
     model = load_model(args.model_path, device)
 
     # Load Image
-    image = np.load(args.image_path)
     # Ensure consistent size through center cropping
     def center_crop(img, target_size):
         h, w = img.shape
@@ -109,19 +108,24 @@ def main():
         return img[i:i+th, j:j+tw]
 
     # Center crop both image and label
+    image = torch.load(args.image_path)
+    
     image = center_crop(image, (224, 224))
-    image = torch.tensor(np.load(args.image_path)).unsqueeze(0).to(device)
-
+    image = image.unsqueeze(0).to(device)
+    label = torch.load(args.image_path.replace("image", "label"))
+    label = center_crop(label, (224, 224))
+    label = label.numpy()
     # Perform Inference in 4 Ways
     pred_no_processing = run_inference(model, image, device)
     pred_with_cca = apply_cca(pred_no_processing)
     pred_topo_single = apply_topo(image, model, device, SINGLE_CLASS_PRIOR)
     pred_topo_multi = apply_topo(image, model, device, MULTI_CLASS_PRIOR)
-
+    os.makedirs(args.output_path, exist_ok=True)
+    out_path = os.path.join(args.output_path, "output.png")
     # Plot and Save Results
     plot_results(image.squeeze(0).cpu().numpy(), 
-                 [pred_no_processing, pred_with_cca, pred_topo_single, pred_topo_multi],
-                 args.output_path)
+                 [label, pred_no_processing, pred_with_cca, pred_topo_single, pred_topo_multi],
+                 out_path)
 
 if __name__ == "__main__":
     main()
