@@ -181,7 +181,7 @@ def test_model(model, test_loader, device, results_dir, save_visualizations, app
     with open(os.path.join(results_dir, 'metrics.txt'), 'a') as f:
         f.write("\n" + "="*50 + "\n")
         f.write(f"Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Model: {model}\n")
+        f.write(f"Description: {description}\n")
         f.write(f"Post-processing: {'CCA' if apply_cca else 'None'}, {'Topology' if apply_topo else 'None'}\n")
         f.write(f"Multi-Class: {multi_class}\n\n")
 
