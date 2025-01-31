@@ -105,7 +105,7 @@ class TrainACDCDataset(Dataset):
         rotated_image, rotated_label = rotate_pair(image, label, angle)
 
         # Apply random crop (e.g., 128x128)
-        cropped_image, cropped_label = random_crop_pair(rotated_image, rotated_label, (224, 224))
+        cropped_image, cropped_label = random_crop_pair(rotated_image, rotated_label, (352, 352))
         # Normalize image after rotation and cropping
         cropped_image = (cropped_image - np.min(cropped_image)) / (np.max(cropped_image) - np.min(cropped_image))
 
