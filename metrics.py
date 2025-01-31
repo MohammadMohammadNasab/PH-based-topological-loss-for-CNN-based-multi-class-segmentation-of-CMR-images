@@ -45,8 +45,7 @@ def generalized_dice(pred, target, num_classes=4, epsilon=1e-6):
     pred_flat = pred.view(num_classes, -1)  # Flatten across batch and spatial dims
     target_flat = target.view(num_classes, -1)
 
-    # Compute per-class weights (inversely proportional to class volume)
-    class_weights = 1.0 / (torch.sum(target_flat, dim=1) ** 2 + epsilon)
+    class_weights = 1.0 / (torch.sum(target_flat, dim=1) + epsilon)
 
     # Compute intersection
     intersection = 2 * torch.sum(target_flat * pred_flat, dim=1)
@@ -89,7 +88,23 @@ def hausdorff_distance(y_pred, y_true, default_value=float('inf')):
 # Replace `betti_pred` and `betti_true` with actual Betti numbers
 
 def betti_error(betti_pred, betti_true):
-    return np.sum(np.abs(np.array(betti_pred) - np.array(betti_true)))
+    """
+    Compute Betti Error (BE) between predicted and ground truth Betti numbers
+    following Equation (35) in the paper.
+
+    Args:
+        betti_pred (dict): Predicted Betti numbers for each class and combination.
+        betti_true (dict): Ground truth Betti numbers for each class and combination.
+
+    Returns:
+        int: Betti error (BE)
+    """
+    betti_error_total = 0
+    for key in betti_true.keys():  # Ensure both single-class & combinations are checked
+        betti_error_total += np.sum(np.abs(np.array(betti_pred[key]) - np.array(betti_true[key])))
+    return betti_error_total
+
+
 
 # Topological Success (TS)
 def topological_success(betti_error):
@@ -100,7 +115,7 @@ def topological_success(betti_error):
 def wilcoxon_signed_rank_test(metric1, metric2):
     return wilcoxon(metric1, metric2)
 
-def compute_betti_numbers(binary_image, max_dim=2):
+def compute_betti_numbers(binary_image, max_dim=1):
     """
     Compute Betti numbers for a binary image using persistent homology.
     
@@ -109,7 +124,7 @@ def compute_betti_numbers(binary_image, max_dim=2):
         max_dim (int): Maximum homology dimension to compute (default=2)
     
     Returns:
-        list: Betti numbers [β₀, β₁, β₂]
+        list: Betti numbers [β₀, β₁]
     """
     # Ensure binary image is properly formatted
     binary_image = binary_image.astype(np.float64)
