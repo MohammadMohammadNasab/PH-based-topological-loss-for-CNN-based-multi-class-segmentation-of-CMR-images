@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from CCA import connected_component_analysis
 from unet import UNet
-from metrics import generalized_dice, dice_coefficient, hausdorff_distance, betti_error, topological_success
+from metrics import compute_betti_numbers, compute_class_combinations_betti, generalized_dice, dice_coefficient, hausdorff_distance, betti_error, topological_success
 from utils.dataloading import get_patient_data, ValACDCDataset
 from topo import multi_class_topological_post_processing
 import datetime
@@ -130,8 +130,15 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
 
             # Compute Betti Errors & Topological Success Rate
             for i in range(len(masks_np)):
-                pred_betti = betti_error(pred_labels_np[i], masks_np[i])
+                # ✅ Compute Betti numbers for single classes & combinations
+                pred_betti_numbers = compute_class_combinations_betti(pred_labels_np[i])
+                true_betti_numbers = compute_class_combinations_betti(masks_np[i])
+
+                # ✅ Compute Betti Error correctly
+                pred_betti = betti_error(pred_betti_numbers, true_betti_numbers)
                 all_betti.append(pred_betti)
+
+                # ✅ Compute Topological Success Rate
                 all_topological_success.append(topological_success(pred_betti))  # Compute TSR
 
     # **Compute Mean CE Loss**
