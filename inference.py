@@ -28,6 +28,7 @@ MULTI_CLASS_PRIOR = {
 # **Argument Parser**
 def parse_args():
     parser = argparse.ArgumentParser(description="Inference with different post-processing methods")
+    parser.add_argument('--description', type=str, required=True, help="Description of the test run")
     parser.add_argument('--image_path', type=str, required=True, help="Path to a single test image")
     parser.add_argument('--model_path', type=str, required=True, help="Path to trained model")
     parser.add_argument('--output_path', type=str, default="output.png", help="Path to save the output visualization")
@@ -46,6 +47,7 @@ def run_inference(model, image, device):
     image = image.to(device).unsqueeze(0)  # Add batch dimension
     with torch.no_grad():
         outputs = model(image)
+    print('model output shape:', outputs.shape)
     pred_probs = torch.softmax(outputs, dim=1)
     pred_labels = torch.argmax(pred_probs, dim=1).squeeze(0).cpu().numpy()
     return pred_labels
@@ -63,18 +65,21 @@ def apply_cca(segmentation_map):
 def apply_topo(image, model, device, prior):
     input_tensor = image.unsqueeze(0).to(device)  # Add batch dimension
     model_topo = multi_class_topological_post_processing(
-        input_tensor, model, prior, lr=1e-3, num_its=100, mse_lambda=1000
+        input_tensor, model, prior, lr=1e-3, num_its=100, mse_lambda=1000, parallel=False
     )
     refined_output = model_topo(input_tensor)
     pred_probs = torch.softmax(refined_output, dim=1)
     pred_labels = torch.argmax(pred_probs, dim=1).squeeze(0).detach().cpu().numpy()
+    print(f'pred labels shape: {pred_labels.shape}')
+    #printing unique values in pred_labels
+    print(f'unique values in pred_labels: {np.unique(pred_labels)}')
     return pred_labels
 
 # **Plot the Results**
 def plot_results(image, segmentations, output_path):
     titles = ["True label","1 No Post-Processing", "2️ CCA Applied", "3️ Topo (Single Class)", "4️ Topo (Multi-Class)"]
     
-    fig, axes = plt.subplots(1, len(segmentations), figsize=(20, 5))
+    fig, axes = plt.subplots(1, len(segmentations) , figsize=(20, 5))
     
     for a in axes:
         a.imshow(image.squeeze(), cmap='gray')
@@ -83,8 +88,8 @@ def plot_results(image, segmentations, output_path):
         plt.setp(a.spines.values(), color=None)
     # Segmentation Maps
     for i in range(len(segmentations)):
-        axes[i + 1].imshow(segmentations[i], alpha =0.5)
-        axes[i + 1].set_title(titles[i])
+        axes[i].imshow(segmentations[i], alpha =0.5)
+        axes[i].set_title(titles[i])
     
     plt.tight_layout()
     plt.savefig(output_path)
@@ -121,7 +126,7 @@ def main():
     pred_topo_single = apply_topo(image, model, device, SINGLE_CLASS_PRIOR)
     pred_topo_multi = apply_topo(image, model, device, MULTI_CLASS_PRIOR)
     os.makedirs(args.output_path, exist_ok=True)
-    out_path = os.path.join(args.output_path, "output.png")
+    out_path = os.path.join(args.output_path, f'predictions_{args.description}.png')
     # Plot and Save Results
     plot_results(image.squeeze(0).cpu().numpy(), 
                  [label, pred_no_processing, pred_with_cca, pred_topo_single, pred_topo_multi],
