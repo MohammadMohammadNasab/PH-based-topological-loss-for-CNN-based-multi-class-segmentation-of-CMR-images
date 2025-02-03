@@ -105,16 +105,16 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
                 print(f"Applying Persistent Homology Post-Processing with {'Multi-Class' if multi_class else 'Single-Class'} Priors...")
                 processed_outputs = []
                 for i in range(images.shape[0]):  # Process each image separately
-                    input_single = images[i].unsqueeze(0).to(device)
+                    input_single = images[i].unsqueeze(0)
 
-                    refined_output = multi_class_topological_post_processing(
+                    topo_model = multi_class_topological_post_processing(
                         input_single, model, priors, lr=1e-5, mse_lambda=1000,
-                        num_its=100, thresh=0.5, parallel=True
+                        num_its=100, thresh=0.5, parallel=False
                     )
+                    refined_output = topo_model(input_single)
+                    processed_outputs.append(refined_output)
 
-                    processed_outputs.append(refined_output.to(device))
-
-                outputs = torch.cat(processed_outputs, dim=0).to(device)
+                outputs = torch.cat(processed_outputs, dim=0)
 
                 pred_probs = torch.softmax(outputs, dim=1)  # Updated predictions
                 pred_labels = torch.argmax(pred_probs, dim=1)  # Updated predictions
@@ -134,15 +134,11 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
 
             # Compute Betti Errors & Topological Success Rate
             for i in range(len(masks_np)):
-                # ✅ Compute Betti numbers for single classes & combinations
                 pred_betti_numbers = compute_class_combinations_betti(pred_labels_np[i])
                 true_betti_numbers = compute_class_combinations_betti(masks_np[i])
 
-                # ✅ Compute Betti Error correctly
                 pred_betti = betti_error(pred_betti_numbers, true_betti_numbers)
                 all_betti.append(pred_betti)
-
-                # ✅ Compute Topological Success Rate
                 all_topological_success.append(topological_success(pred_betti))  # Compute TSR
 
     # **Compute Percentiles**
@@ -202,7 +198,7 @@ def main():
     args = parse_args()
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    test_data_dict, test_image_paths, test_lbl_paths = get_patient_data(args.test_dir)
+    _, test_image_paths, test_lbl_paths = get_patient_data(args.test_dir)
     test_dataset = ValACDCDataset(test_image_paths, test_lbl_paths)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
