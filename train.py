@@ -3,14 +3,14 @@ import os
 import random
 import shutil
 import datetime
+import uuid
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
-import torch.utils.data as data
 import torch
 import numpy as np
 from unet import UNet
 from utils.dataloading import get_patient_data, TrainACDCDataset, ValACDCDataset
-from utils.metrics import generalized_dice, hausdorff_distance, dice_coefficient
+from metrics import generalized_dice, hausdorff_distance, dice_coefficient
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train UNet model for ACDC segmentation')
@@ -39,7 +39,7 @@ def create_experiment_dir():
     next_exp_num = len(existing_experiments) + 1
     
     # Create new experiment directory with subdirectories
-    exp_dir = os.path.join(experiments_dir, f'experiment_{next_exp_num}')
+    exp_dir = os.path.join(experiments_dir, f'experiment_{uuid.uuid4()}')
     os.makedirs(exp_dir)
     os.makedirs(os.path.join(exp_dir, 'plots'))
     os.makedirs(os.path.join(exp_dir, 'models'))
