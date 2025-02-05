@@ -33,8 +33,8 @@ def generalized_dice(pred, target, num_classes=4, epsilon=1e-6):
     Compute the Generalized Dice Similarity Coefficient (gDSC) for multi-class segmentation.
 
     Args:
-        pred (torch.Tensor): Predicted segmentation (B, C, H, W) as softmax output.
-        target (torch.Tensor): Ground truth segmentation (B, H, W) as class index map.
+        pred (torch.Tensor or numpy.ndarray): Predicted segmentation (B, C, H, W) as softmax output.
+        target (torch.Tensor or numpy.ndarray): Ground truth segmentation (B, H, W) as class index map.
         num_classes (int): Number of segmentation classes.
         epsilon (float): Small value to prevent division by zero.
 
@@ -42,12 +42,20 @@ def generalized_dice(pred, target, num_classes=4, epsilon=1e-6):
         gDSC (float): Generalized Dice Score
         class_gDSC (list): Per-class Dice Scores
     """
+    # Convert inputs to torch tensors if they're not already
+    if not isinstance(pred, torch.Tensor):
+        pred = torch.tensor(pred)
+    if not isinstance(target, torch.Tensor):
+        target = torch.tensor(target)
+
     # Ensure target is one-hot encoded
-    target_one_hot = torch.nn.functional.one_hot(target, num_classes=num_classes).permute(0, 3, 1, 2).float()
+    target_one_hot = torch.nn.functional.one_hot(target.long(), num_classes=num_classes)
+    target_one_hot = target_one_hot.permute(0, 3, 1, 2).float()
 
     # Flatten along spatial dimensions
-    pred_flat = pred.view(pred.shape[0], num_classes, -1)  # (B, C, H*W)
-    target_flat = target_one_hot.view(target_one_hot.shape[0], num_classes, -1)
+    batch_size = pred.shape[0]
+    pred_flat = pred.reshape(batch_size, num_classes, -1)  # (B, C, H*W)
+    target_flat = target_one_hot.reshape(batch_size, num_classes, -1)
 
     # Compute class weights (Inverse squared frequency)
     class_weights = 1.0 / (torch.sum(target_flat, dim=2) ** 2 + epsilon)
@@ -113,11 +121,6 @@ def betti_error(betti_pred, betti_true):
 # Topological Success (TS)
 def topological_success(betti_error):
     return 1 if betti_error == 0 else 0
-
-# Statistical Tests
-# Wilcoxon Signed-Rank Test
-def wilcoxon_signed_rank_test(metric1, metric2):
-    return wilcoxon(metric1, metric2)
 
 def compute_betti_numbers(binary_image, max_dim=1):
     """
