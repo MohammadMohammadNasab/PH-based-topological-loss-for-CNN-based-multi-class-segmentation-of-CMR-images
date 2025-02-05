@@ -7,7 +7,8 @@ import uuid
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import torch
-import numpy as np
+import numpy as  np
+from tqdm import tqdm
 from unet import UNet
 from utils.dataloading import get_patient_data, TrainACDCDataset, ValACDCDataset
 from metrics import generalized_dice, hausdorff_distance, dice_coefficient
@@ -206,12 +207,13 @@ def main():
         mean_dsc = [np.mean(class_dscs) if len(class_dscs) > 0 else 0.0 
                     for class_dscs in all_dsc]
         
-        return mean_ce_loss, mean_gdice, class_gdice.tolist(), mean_hdd, mean_dsc
+        return mean_ce_loss, mean_gdice, class_gdice, mean_hdd, mean_dsc
 
     # Training loop with argument values
     best_gdice = 0
     iteration = 0
     train_iterator = iter(train_loader)
+    pbar = tqdm(total=args.max_iterations, desc='Training')
 
     while iteration < args.max_iterations:
         model.train()
@@ -235,6 +237,10 @@ def main():
         
         # Store training loss
         train_losses.append(loss.item())
+        
+        # Update progress bar
+        pbar.update(1)
+        pbar.set_postfix({'loss': f'{loss.item():.4f}'})
         
         # Evaluate using argument value for validation steps
         if iteration % args.validation_steps == 0:
@@ -290,6 +296,7 @@ def main():
 
         iteration += 1
 
+    pbar.close()
     print('Training completed!')
     # Final plot
     plot_metrics(
