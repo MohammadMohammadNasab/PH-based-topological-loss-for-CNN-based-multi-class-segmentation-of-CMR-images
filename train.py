@@ -11,7 +11,10 @@ import numpy as  np
 from tqdm import tqdm
 from unet import UNet
 from utils.dataloading import get_patient_data, TrainACDCDataset, ValACDCDataset
-from metrics import generalized_dice, hausdorff_distance, dice_coefficient
+from metrics import generalized_dice, hausdorff_distance, dice_coefficient, betti_error, topological_success, compute_class_combinations_betti
+from topo import compute_topological_loss  # Assumes you have this function implemented
+from torch.cuda.amp import autocast, GradScaler  # Add this import for mixed precision
+# Optionally, import a helper to load or define the anatomical prior:
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train UNet model for ACDC segmentation')
@@ -27,6 +30,12 @@ def parse_args():
                         help='Learning rate for optimizer')
     parser.add_argument('--validation_steps', type=int, default=10,
                         help='Number of iterations between validations')
+    parser.add_argument('--use_topo_loss', action='store_true',
+                        help='Flag to use topological loss during training')
+    parser.add_argument('--lambda_ce', type=float, default=1.0,
+                        help='Weight for the Cross Entropy loss')
+    parser.add_argument('--multi_class', action='store_true',
+                        help='Flag to enable multi-class segmentation')
     return parser.parse_args()
 
 # Move the main training logic into a function
@@ -47,6 +56,24 @@ def create_experiment_dir():
     os.makedirs(os.path.join(exp_dir, 'logs'))
     
     return exp_dir
+
+# Define the function to get anatomical priors
+def get_priors(multi_class):
+    if multi_class:
+        return {
+            (1,):   (1, 0),
+            (2,):   (1, 1),
+            (3,):   (1, 0),
+            (1, 2): (1, 1),
+            (1, 3): (2, 0),
+            (2, 3): (1, 0)
+        }
+    else:
+        return {
+            (1,):   (1, 0),
+            (2,):   (1, 1),
+            (3,):   (1, 0),
+        }
 
 def main():
     args = parse_args()
@@ -73,12 +100,16 @@ def main():
     )
 
     # Use argument values for configuration
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
     model = model.to(device)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+    scaler = GradScaler() if device == 'cuda' else None  # Initialize the GradScaler for mixed precision if using CUDA
+
+    # Load or define the anatomical prior (B)
+    B = get_priors(multi_class=args.multi_class)  # Use multi_class flag from args
 
     # Rest of the existing tracking lists and helper functions
     train_losses = []
@@ -127,7 +158,7 @@ def main():
         plt.close()
 
     # Add new logging function
-    def log_metrics(exp_dir, iteration, train_loss, val_loss, mean_gdice, class_gdice, class_hdd, is_best=False):
+    def log_metrics(exp_dir, iteration, train_loss, val_loss, mean_gdice, class_gdice, class_hdd, be=None, ts=None, is_best=False):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_file = os.path.join(exp_dir, 'logs', 'training_log.txt')
         
@@ -135,6 +166,9 @@ def main():
         log_entry += f"Training Loss: {train_loss:.4f}\n"
         log_entry += f"Validation Loss: {val_loss:.4f}\n"
         log_entry += f"Mean Validation GDice: {mean_gdice:.4f}\n"
+        if be is not None and ts is not None:
+            log_entry += f"Betti Error: {be}\n"
+            log_entry += f"Topological Success: {ts}\n"
         log_entry += "Per-class metrics:\n"
         for i, (dice, hdd) in enumerate(zip(class_gdice, class_hdd)):
             log_entry += f"  Class {i}: GDice={dice:.4f}, HDD={hdd:.4f}\n"
@@ -158,14 +192,19 @@ def main():
         all_targets = []
         all_hdd = [[] for _ in range(4)]  # For background and 3 classes
         all_dsc = [[] for _ in range(4)]  # For background and 3 classes
+        all_betti_errors = []
+        all_topo_success = []
         
         with torch.no_grad():
             for images, masks in val_loader:
                 images, masks = images.to(device), masks.to(device)
-                outputs = model(images)
-                
-                # Calculate Cross Entropy Loss
-                ce_loss = criterion(outputs, masks)
+                if device == 'cuda':
+                    with autocast():  # Use autocast for mixed precision
+                        outputs = model(images)
+                        ce_loss = criterion(outputs, masks)
+                else:
+                    outputs = model(images.float())
+                    ce_loss = criterion(outputs, masks.float())
                 total_ce_loss += ce_loss.item()
                 
                 # Convert predictions to probabilities and then to class labels
@@ -186,6 +225,15 @@ def main():
                             all_hdd[class_idx].append(hdd)
                             all_dsc[class_idx].append(dsc)
                 
+                if args.use_topo_loss:
+                    # Compute Betti numbers and topological metrics
+                    betti_pred = compute_class_combinations_betti(pred_labels)
+                    betti_true = compute_class_combinations_betti(masks)
+                    be = betti_error(betti_pred, betti_true)
+                    ts = topological_success(be)
+                    all_betti_errors.append(be)
+                    all_topo_success.append(ts)
+                
                 all_predictions.append(pred)
                 all_targets.append(masks)
         
@@ -204,14 +252,19 @@ def main():
         # Calculate mean Hausdorff distance and Dice coefficient for each class
         mean_hdd = [np.mean(class_hdds) if len(class_hdds) > 0 else float('inf') 
                     for class_hdds in all_hdd]
-        mean_dsc = [np.mean(class_dscs) if len(class_dscs) > 0 else 0.0 
-                    for class_dscs in all_dsc]
+        mean_dsc = [np.mean(class_dscs) if len(class_dscs) > 0 else 0.0 for class_dscs in all_dsc]
         
-        return mean_ce_loss, mean_gdice, class_gdice, mean_hdd, mean_dsc
+        if args.use_topo_loss:
+            # Calculate mean Betti error and topological success
+            mean_betti_error = np.mean(all_betti_errors)
+            mean_topo_success = np.mean(all_topo_success)
+            return mean_ce_loss, mean_gdice, class_gdice, mean_hdd, mean_dsc, mean_betti_error, mean_topo_success
+        else:
+            return mean_ce_loss, mean_gdice, class_gdice, mean_hdd, mean_dsc, None, None
 
     # Training loop with argument values
     best_gdice = 0
-    iteration = 0
+    iteration = 1
     train_iterator = iter(train_loader)
     pbar = tqdm(total=args.max_iterations, desc='Training')
 
@@ -227,13 +280,35 @@ def main():
         images, masks = images.to(device), masks.to(device)
         
         # Forward pass
-        outputs = model(images)
-        loss = criterion(outputs, masks)
+        if device == 'cuda':
+            with autocast():  # Use autocast for mixed precision
+                outputs = model(images)
+                seg_loss = criterion(outputs, masks)
+                
+                if args.use_topo_loss:
+                    topo_loss = compute_topological_loss(outputs, B)
+                    loss = args.lambda_ce * seg_loss + topo_loss
+                else:
+                    loss = seg_loss
+        else:
+            outputs = model(images.float())
+            seg_loss = criterion(outputs, masks.float())
+            
+            if args.use_topo_loss:
+                topo_loss = compute_topological_loss(outputs, B, parallel=False)
+                loss = args.lambda_ce * seg_loss + topo_loss
+            else:
+                loss = seg_loss
         
         # Backward pass
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if device == 'cuda':
+            scaler.scale(loss).backward()  # Scale the loss for mixed precision
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
         
         # Store training loss
         train_losses.append(loss.item())
@@ -244,14 +319,14 @@ def main():
         
         # Evaluate using argument value for validation steps
         if iteration % args.validation_steps == 0:
-            val_ce_loss, val_gdice, class_gdice, class_hdd, class_dsc = evaluate_model(model, val_loader)
+            val_ce_loss, val_gdice, class_gdice, class_hdd, class_dsc, mean_betti_error, mean_topo_success = evaluate_model(model, val_loader)
             print(f'Iteration {iteration}:')
             print(f'Training CE Loss: {loss.item():.4f}')
             print(f'Validation CE Loss: {val_ce_loss:.4f}')
             print(f'Mean Validation GDice: {val_gdice:.4f}')
-            print('Per-class GDice scores:')
-            for i, dice in enumerate(class_gdice):
-                print(f'  Class {i}: {dice:.4f}')
+            if args.use_topo_loss:
+                print(f'Betti Error: {mean_betti_error}')
+                print(f'Topological Success: {mean_topo_success}')
             print('Per-class Hausdorff distances:')
             for i, hdd in enumerate(class_hdd):
                 print(f'  Class {i}: {hdd:.4f}')
@@ -264,14 +339,6 @@ def main():
             val_losses.append(val_ce_loss)
             val_gdice_scores.append(val_gdice)
             
-            # Plot current metrics
-            # plot_metrics(
-            #     train_losses[::args.validation_steps],  # Sample training loss at validation steps
-            #     val_losses,
-            #     val_gdice_scores,
-            #     iterations,
-            #     exp_dir
-            #)
             
             # Modified model saving section
             if val_gdice > best_gdice:
@@ -289,10 +356,10 @@ def main():
                 }, model_path)
                 print(f'New best model saved! Mean GDice: {best_gdice:.4f}')
                 # Log the best model metrics
-                log_metrics(exp_dir, iteration, loss.item(), val_ce_loss, val_gdice, class_gdice, class_hdd, is_best=True)
+                log_metrics(exp_dir, iteration, loss.item(), val_ce_loss, val_gdice, class_gdice, class_hdd, mean_betti_error, mean_topo_success, is_best=True)
             else:
                 # Log regular metrics
-                log_metrics(exp_dir, iteration, loss.item(), val_ce_loss, val_gdice, class_gdice, class_hdd, is_best=False)
+                log_metrics(exp_dir, iteration, loss.item(), val_ce_loss, val_gdice, class_gdice, class_hdd, mean_betti_error, mean_topo_success, is_best=False)
 
         iteration += 1
 
