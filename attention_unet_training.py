@@ -91,20 +91,6 @@ def main():
     train_dataset = TrainACDCDataset(train_data_dict)
     val_dataset = ValACDCDataset(val_image_paths, val_lbl_paths)
 
-    # Define Topological Priors (Example)
-    topo_prior = np.array([[1, 0, 1],  # Region 1 should connect to 1 and 3, not 2
-                           [0, 1, 0],  # Region 2 should only connect to itself
-                           [1, 0, 1]]) # Region 3 should connect to 1 and 3, not 2
-    topo_prior = torch.tensor(topo_prior, dtype=torch.float32).to(device)
-
-    # Define Betti Number Priors (Example)
-    betti_priors = {
-        0: (1, 0),  # Background: 1 connected component, 0 holes
-        1: (1, 0),  # Left Ventricle: 1 connected component, 0 holes
-        2: (1, 0),  # Myocardium: 1 connected component, 0 holes
-        3: (1, 0)   # Right Ventricle: 1 connected component, 0 holes
-    }
-
     model = UNet(
         in_channels=1,
         n_classes=4,
@@ -113,9 +99,7 @@ def main():
         padding=True,
         batch_norm=True,
         up_mode='upsample',
-        attention=args.attention,  # Pass the attention flag
-        topo_prior=topo_prior, # Pass the topological prior
-        betti_priors=betti_priors # Pass the Betti number priors
+        attention=args.attention  # Pass the attention flag
     )
 
     # Use argument values for configuration
@@ -244,14 +228,13 @@ def main():
                             all_hdd[class_idx].append(hdd)
                             all_dsc[class_idx].append(dsc)
                 
-                if args.use_topo_loss:
-                    # Compute Betti numbers and topological metrics
-                    betti_pred = compute_class_combinations_betti(pred_labels)
-                    betti_true = compute_class_combinations_betti(masks)
-                    be = betti_error(betti_pred, betti_true)
-                    ts = topological_success(be)
-                    all_betti_errors.append(be)
-                    all_topo_success.append(ts)
+                # Compute Betti numbers and topological metrics
+                betti_pred = compute_class_combinations_betti(pred_labels)
+                betti_true = compute_class_combinations_betti(masks)
+                be = betti_error(betti_pred, betti_true)
+                ts = topological_success(be)
+                all_betti_errors.append(be)
+                all_topo_success.append(ts)
                 
                 all_predictions.append(pred)
                 all_targets.append(masks)
@@ -272,14 +255,11 @@ def main():
         mean_hdd = [np.mean(class_hdds) if len(class_hdds) > 0 else float('inf') 
                     for class_hdds in all_hdd]
         mean_dsc = [np.mean(class_dscs) if len(class_dscs) > 0 else 0.0 for class_dscs in all_dsc]
-        
-        if args.use_topo_loss:
-            # Calculate mean Betti error and topological success
-            mean_betti_error = np.mean(all_betti_errors)
-            mean_topo_success = np.mean(all_topo_success)
-            return mean_ce_loss, mean_gdice, class_gdice, mean_hdd, mean_dsc, mean_betti_error, mean_topo_success
-        else:
-            return mean_ce_loss, mean_gdice, class_gdice, mean_hdd, mean_dsc, None, None
+
+        # Calculate mean Betti error and topological success
+        mean_betti_error = np.mean(all_betti_errors)
+        mean_topo_success = np.mean(all_topo_success)
+        return mean_ce_loss, mean_gdice, class_gdice, mean_hdd, mean_dsc, mean_betti_error, mean_topo_success
 
     # Training loop with argument values
     best_gdice = 0
@@ -303,22 +283,13 @@ def main():
             with autocast():  # Use autocast for mixed precision
                 outputs = model(images)
                 seg_loss = criterion(outputs, masks)
-                
-                if args.use_topo_loss:
-                    topo_loss = compute_topological_loss(outputs, B)
-                    attention_topo_loss =  torch.mean(topo_prior * outputs) #Encourage attention where prior is 1
-                    loss = args.lambda_ce * seg_loss + topo_loss + attention_topo_loss
-                else:
-                    loss = seg_loss
+                loss = seg_loss
         else:
             outputs = model(images.float())
             seg_loss = criterion(outputs, masks.float())
             
-            if args.use_topo_loss:
-                topo_loss = compute_topological_loss(outputs, B, parallel=False)
-                loss = args.lambda_ce * seg_loss + topo_loss
-            else:
-                loss = seg_loss
+            
+            loss = seg_loss
         
         # Backward pass
         optimizer.zero_grad()
@@ -344,9 +315,8 @@ def main():
             print(f'Training CE Loss: {loss.item():.4f}')
             print(f'Validation CE Loss: {val_ce_loss:.4f}')
             print(f'Mean Validation GDice: {val_gdice:.4f}')
-            if args.use_topo_loss:
-                print(f'Betti Error: {mean_betti_error}')
-                print(f'Topological Success: {mean_topo_success}')
+            print(f'Betti Error: {mean_betti_error}')
+            print(f'Topological Success: {mean_topo_success}')
             print('Per-class Hausdorff distances:')
             for i, hdd in enumerate(class_hdd):
                 print(f'  Class {i}: {hdd:.4f}')
