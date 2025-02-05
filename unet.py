@@ -3,7 +3,43 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+from metrics import compute_betti_numbers # Import the function
 
+class AttentionBlock(nn.Module):
+    def __init__(self, in_channels, out_channels): # Removed betti_priors
+        super(AttentionBlock, self).__init__()
+        self.W_g = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0),
+            nn.BatchNorm2d(out_channels)
+        )
+        self.W_x = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0),
+            nn.BatchNorm2d(out_channels)
+        )
+        self.W_global = nn.Sequential(  # Global context branch
+            nn.Conv2d(in_channels, out_channels, kernel_size=1), # Learnable pooling
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+        self.psi = nn.Sequential(
+            nn.Conv2d(out_channels, 1, kernel_size=1, padding=0),
+            nn.BatchNorm2d(1),
+            nn.Sigmoid()
+        )
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, g, x):
+        # g: gating signal from previous layer
+        # x: input tensor from encoder layer
+        g1 = self.W_g(g)
+        x1 = self.W_x(x)
+        global_context = self.W_global(x)  # Global context
+        global_context = torch.nn.functional.interpolate(global_context, size=x1.size()[2:], mode='bilinear', align_corners=False) # Resize to match x1
+        psi = self.relu(g1 + x1 + global_context)  # Incorporate global context
+        psi = self.psi(psi) # Attention map
+
+        out = x * psi
+        return out
 
 class UNet(nn.Module):
     def __init__(
@@ -15,6 +51,7 @@ class UNet(nn.Module):
         padding=False,
         batch_norm=False,
         up_mode='upconv',
+        attention=False # Add attention flag
     ):
         """
         Implementation of
@@ -39,11 +76,14 @@ class UNet(nn.Module):
                            'upconv' will use transposed convolutions for
                            learned upsampling.
                            'upsample' will use bilinear upsampling.
+            attention (bool): if True, use attention mechanism
         """
         super(UNet, self).__init__()
         assert up_mode in ('upconv', 'upsample')
         self.padding = padding
         self.depth = depth
+        self.attention = attention # Store attention flag
+
         prev_channels = in_channels
         self.down_path = nn.ModuleList()
         for i in range(depth):
@@ -55,7 +95,7 @@ class UNet(nn.Module):
         self.up_path = nn.ModuleList()
         for i in reversed(range(depth - 1)):
             self.up_path.append(
-                UNetUpBlock(prev_channels, wf * 2 ** i, up_mode, padding, batch_norm)
+                UNetUpBlock(prev_channels, wf * 2 ** i, up_mode, padding, batch_norm, attention=self.attention) # Pass attention
             )
             prev_channels = wf * 2 ** i
 
@@ -98,8 +138,9 @@ class UNetConvBlock(nn.Module):
 
 
 class UNetUpBlock(nn.Module):
-    def __init__(self, in_size, out_size, up_mode, padding, batch_norm):
+    def __init__(self, in_size, out_size, up_mode, padding, batch_norm, attention=False): # Removed betti_priors
         super(UNetUpBlock, self).__init__()
+        self.attention = attention
         if up_mode == 'upconv':
             self.up = nn.ConvTranspose2d(in_size, out_size, kernel_size=2, stride=2)
         elif up_mode == 'upsample':
@@ -109,6 +150,8 @@ class UNetUpBlock(nn.Module):
             )
 
         self.conv_block = UNetConvBlock(in_size, out_size, padding, batch_norm)
+        if self.attention:
+            self.attention_block = AttentionBlock(in_size//2, out_size) # Removed betti_priors
 
     def center_crop(self, layer, target_size):
         _, _, layer_height, layer_width = layer.size()
@@ -121,6 +164,8 @@ class UNetUpBlock(nn.Module):
     def forward(self, x, bridge):
         up = self.up(x)
         crop1 = self.center_crop(bridge, up.shape[2:])
+        if self.attention:
+            crop1 = self.attention_block(up, crop1)
         out = torch.cat([up, crop1], 1)
         out = self.conv_block(out)
 
