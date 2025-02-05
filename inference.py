@@ -25,6 +25,14 @@ MULTI_CLASS_PRIOR = {
     (2, 3): (1, 0)
 }
 
+# Add this after CLASS_LABELS
+SEGMENTATION_COLORS = {
+    0: [0, 0, 0, 0],        # Background - transparent
+    1: [1, 0, 0, 0.5],      # RV - red
+    2: [0, 1, 0, 0.5],      # MY - green
+    3: [0, 0, 1, 0.5]       # LV - blue
+}
+
 # **Argument Parser**
 def parse_args():
     parser = argparse.ArgumentParser(description="Inference with different post-processing methods")
@@ -44,7 +52,8 @@ def load_model(model_path, device):
 
 # **Perform Inference**
 def run_inference(model, image, device):
-    image = image.to(device).unsqueeze(0)  # Add batch dimension
+    # Remove the unsqueeze here since image is already batched
+    image = image.unsqueeze(0).to(device)
     with torch.no_grad():
         outputs = model(image)
     print('model output shape:', outputs.shape)
@@ -77,18 +86,25 @@ def apply_topo(image, model, device, prior):
 
 # **Plot the Results**
 def plot_results(image, segmentations, output_path):
-    titles = ["True label","1 No Post-Processing", "2️ CCA Applied", "3️ Topo (Single Class)", "4️ Topo (Multi-Class)"]
+    titles = ["True label", "1 No Post-Processing", "2️ CCA Applied", "3️ Topo (Single Class)", "4️ Topo (Multi-Class)"]
     
-    fig, axes = plt.subplots(1, len(segmentations) , figsize=(20, 5))
+    fig, axes = plt.subplots(1, len(segmentations), figsize=(20, 5))
     
     for a in axes:
         a.imshow(image.squeeze(), cmap='gray')
         a.set_xticks([])
         a.set_yticks([])
         plt.setp(a.spines.values(), color=None)
-    # Segmentation Maps
+    
+    # Segmentation Maps with fixed colors
     for i in range(len(segmentations)):
-        axes[i].imshow(segmentations[i], alpha =0.5)
+        # Create RGBA overlay
+        overlay = np.zeros((*segmentations[i].shape, 4))
+        for class_idx, color in SEGMENTATION_COLORS.items():
+            mask = segmentations[i] == class_idx
+            overlay[mask] = color
+        
+        axes[i].imshow(overlay)
         axes[i].set_title(titles[i])
     
     plt.tight_layout()
@@ -113,13 +129,17 @@ def main():
         return img[i:i+th, j:j+tw]
 
     # Center crop both image and label
-    image = torch.load(args.image_path)
+    image = np.load(args.image_path, allow_pickle=True)
     
     image = center_crop(image, (224, 224))
-    image = image.unsqueeze(0).to(device)
-    label = torch.load(args.image_path.replace("image", "label"))
+    # Normalize Image and ensure float32 type with correct dimensions [B, C, H, W]
+    image = (image - np.min(image)) / (np.max(image) - np.min(image))
+    image = torch.tensor(image, dtype=torch.float32)
+    image = image.unsqueeze(0) # Add single batch and channel dimensions
+    image = image.to(device)
+    
+    label = np.load(args.image_path.replace("image", "label"), allow_pickle=True)
     label = center_crop(label, (224, 224))
-    label = label.numpy()
     # Perform Inference in 4 Ways
     pred_no_processing = run_inference(model, image, device)
     pred_with_cca = apply_cca(pred_no_processing)
