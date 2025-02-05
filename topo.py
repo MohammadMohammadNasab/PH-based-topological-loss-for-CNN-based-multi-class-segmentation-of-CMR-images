@@ -50,7 +50,7 @@ def get_differentiable_barcode(tensor, barcode):
     
     return inf_birth, delta_p
 
-def compute_topological_loss(output, prior, thresh=0.01, construction='0', parallel=True):
+def compute_topological_loss(output, prior, thresh=0.5, construction='0', parallel=False):
     """
     Compute the topological loss for the given output and prior.
     
@@ -76,7 +76,7 @@ def compute_topological_loss(output, prior, thresh=0.01, construction='0', paral
         roi = [slice(None, None)] + [slice(None, None) for _ in range(len(spatial_dims))]
     
     # Build class/combination-wise (c-wise) image tensor for prior
-    combos = torch.stack([output[roi][c.T].sum(0) for c in prior.keys()])
+    combos = torch.stack([output[roi][torch.tensor(c).T].sum(0) for c in prior.keys()])
     
     # Invert probabilistic fields for consistency with cripser sub-level set persistence
     combos = 1 - combos
@@ -102,8 +102,8 @@ def compute_topological_loss(output, prior, thresh=0.01, construction='0', paral
         for dim in range(len(spatial_dims)):
             bcodes[c, dim, :len(fin[dim])] = fin[dim]
     
-    # Select features for the construction of the topological loss
-    stacked_prior = torch.stack(list(prior.values()))
+    # Convert prior values to tensors before stacking
+    stacked_prior = torch.stack([torch.tensor(b) for b in prior.values()])
     stacked_prior.T[0] -= 1  # Since fundamental 0D component has infinite persistence
     matching = torch.zeros_like(bcodes).detach().bool()
     for c, combo in enumerate(stacked_prior):
@@ -179,7 +179,7 @@ def multi_class_topological_post_processing(
         outputs_roi = outputs[roi]
 
         # Build class/combination-wise (c-wise) image tensor for prior
-        combos = torch.stack([outputs_roi[c.T].sum(0) for c in prior.keys()])
+        combos = torch.stack([outputs_roi[torch.tensor(c).T].sum(0) for c in prior.keys()])
 
         # Invert probababilistic fields for consistency with cripser sub-level set persistence
         combos = 1 - combos
