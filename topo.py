@@ -50,6 +50,73 @@ def get_differentiable_barcode(tensor, barcode):
     
     return inf_birth, delta_p
 
+def compute_topological_loss(output, prior, thresh=0.01, construction='0', parallel=True):
+    """
+    Compute the topological loss for the given output and prior.
+    
+    Arguments:
+        output      - PyTorch tensor - [batch_size, number of classes] + [spatial dimensions (2D or 3D)]
+        prior       - Topological prior as dictionary:
+                      keys are tuples specifying the channel(s) of output
+                      values are tuples specifying the desired Betti numbers
+        thresh      - Threshold at which to define the foreground ROI for topological post-processing
+        construction - Either '0' (4 (2D) or 6 (3D) connectivity) or 'N' (8 (2D) or 26 (3D) connectivity) ['0']
+        parallel    - Whether to use parallel processing for computing persistent homology
+    
+    Returns:
+        topo_loss   - Computed topological loss
+    """
+    device = output.device
+    spatial_dims = list(output.shape[2:])
+    
+    # Get ROI for topological consideration
+    if thresh:
+        roi = get_roi(output[1:].sum(0).squeeze(), thresh)
+    else:
+        roi = [slice(None, None)] + [slice(None, None) for _ in range(len(spatial_dims))]
+    
+    # Build class/combination-wise (c-wise) image tensor for prior
+    combos = torch.stack([output[roi][c.T].sum(0) for c in prior.keys()])
+    
+    # Invert probabilistic fields for consistency with cripser sub-level set persistence
+    combos = 1 - combos
+    
+    # Get barcodes using cripser in parallel without autograd
+    combos_arr = combos.detach().cpu().numpy().astype(np.float64)
+    max_dims = [len(b) for b in prior.values()]
+    PH = {'0': crip_wrapper, 'N': trip_wrapper}
+    
+    if parallel:
+        with torch.no_grad():
+            with Pool(len(prior)) as p:
+                bcodes_arr = p.starmap(PH[construction], zip(combos_arr, max_dims))
+    else:
+        with torch.no_grad():
+            bcodes_arr = [PH[construction](combo, max_dim) for combo, max_dim in zip(combos_arr, max_dims)]
+    
+    # Get differentiable barcodes using autograd
+    max_features = max([bcode_arr.shape[0] for bcode_arr in bcodes_arr])
+    bcodes = torch.zeros([len(prior), max(max_dims), max_features], requires_grad=False, device=device)
+    for c, (combo, bcode) in enumerate(zip(combos, bcodes_arr)):
+        _, fin = get_differentiable_barcode(combo, bcode)
+        for dim in range(len(spatial_dims)):
+            bcodes[c, dim, :len(fin[dim])] = fin[dim]
+    
+    # Select features for the construction of the topological loss
+    stacked_prior = torch.stack(list(prior.values()))
+    stacked_prior.T[0] -= 1  # Since fundamental 0D component has infinite persistence
+    matching = torch.zeros_like(bcodes).detach().bool()
+    for c, combo in enumerate(stacked_prior):
+        for dim in range(len(combo)):
+            matching[c, dim, slice(None, stacked_prior[c, dim])] = True
+    
+    # Find total persistence of features which match (A) / violate (Z) the prior
+    A = (1 - bcodes[matching]).sum()
+    Z = bcodes[~matching].sum()
+    
+    topo_loss = A + Z
+    return topo_loss
+
 def multi_class_topological_post_processing(
     inputs, model, prior,
     lr, mse_lambda,
