@@ -82,7 +82,7 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
             pred_labels = torch.argmax(pred_probs, dim=1)
 
             # Calculate generalized dice score
-            gdsc, gdsc_per_class = generalized_dice(pred_probs, masks)
+            gdsc, _ = generalized_dice(pred_probs, masks)
             all_gdsc.append(gdsc)
 
             # Convert to numpy
@@ -91,35 +91,38 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
             masks_np = masks.cpu().numpy()
 
             # **Apply CCA (Connected Component Analysis)**
-            if apply_cca:
-                for class_idx in range(1, 4):  # Skip background
-                    for batch_idx in range(pred_labels_np.shape[0]):
-                        class_mask = (pred_labels_np[batch_idx] == class_idx)
-                        if class_mask.any():
-                            processed_mask = connected_component_analysis(class_mask, connectivity=1)
-                            pred_labels_np[batch_idx][class_mask] = 0  # Clear original
-                            pred_labels_np[batch_idx][processed_mask == 1] = class_idx
+            for class_idx in range(1, 4):  # Skip background
+                for batch_idx in range(pred_labels_np.shape[0]):
+                    class_mask = (pred_labels_np[batch_idx] == class_idx)
+                    if class_mask.any():
+                        processed_mask = connected_component_analysis(class_mask, connectivity=1)
+                        pred_labels_np[batch_idx][class_mask] = 0  # Clear original
+                        pred_labels_np[batch_idx][processed_mask == 1] = class_idx
 
             # **Apply Persistent Homology Post-Processing**
             if apply_topo:
-                print(f"Applying Persistent Homology Post-Processing with {'Multi-Class' if multi_class else 'Single-Class'} Priors...")
-                processed_outputs = []
-                for i in range(images.shape[0]):  # Process each image separately
-                    input_single = images[i].unsqueeze(0)
-
-                    topo_model = multi_class_topological_post_processing(
-                        input_single, model, priors, lr=1e-5, mse_lambda=1000,
-                        num_its=100, thresh=0.5, parallel=False
-                    )
-                    refined_output = topo_model(input_single)
-                    processed_outputs.append(refined_output)
+                with torch.enable_grad():
+                    model.train()  # Set model to training mode for topological post-processing
+                    print(f"Applying Persistent Homology Post-Processing with {'Multi-Class' if multi_class else 'Single-Class'} Priors...")
+                    processed_outputs = []
+                    for i in range(images.shape[0]):  # Process each image separately
+                        input_single = images[i].unsqueeze(0)
+                        topo_model = multi_class_topological_post_processing(
+                            input_single, model, priors, lr=1e-5, mse_lambda=1000,
+                            num_its=100, thresh=0.5, parallel=False
+                        )
+                        refined_output = topo_model(input_single)
+                        refined_output_np = refined_output.detach().cpu().numpy()
+                        unique_values = np.unique(refined_output_np)
+                        print(f"Unique values in refined output: {unique_values}")
+                        processed_outputs.append(refined_output)
 
                 outputs = torch.cat(processed_outputs, dim=0)
 
                 pred_probs = torch.softmax(outputs, dim=1)  # Updated predictions
                 pred_labels = torch.argmax(pred_probs, dim=1)  # Updated predictions
                 pred_labels_np = pred_labels.cpu().numpy()
-
+            model.eval()
             # Store results
             all_predictions.append(pred_probs_np)
             all_targets.append(masks_np)
