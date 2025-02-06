@@ -52,6 +52,32 @@ def compute_percentiles(data, percentiles=[25, 50, 75]):
         return [None] * len(percentiles)  # Return None if data is empty
     return np.percentile(data, percentiles).tolist()
 
+def plot_losses(all_losses, save_path):
+    """Plot topo and MSE losses for all samples."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+    
+    # Plot topological losses
+    for i, losses in enumerate(all_losses):
+        ax1.plot(losses['topo_loss'], label=f'Sample {i+1}', alpha=0.7)
+    ax1.set_title('Topological Loss')
+    ax1.set_xlabel('Iteration')
+    ax1.set_ylabel('Loss')
+    ax1.grid(True)
+    
+    # Plot MSE losses
+    for i, losses in enumerate(all_losses):
+        ax2.plot(losses['mse_loss'], label=f'Sample {i+1}', alpha=0.7)
+    ax2.set_title('MSE Loss')
+    ax2.set_xlabel('Iteration')
+    ax2.set_ylabel('Loss')
+    ax2.grid(True)
+    
+    # Add legend to the right of the figure
+    fig.legend(bbox_to_anchor=(1.15, 0.5), loc='center left')
+    plt.tight_layout()
+    plt.savefig(save_path, bbox_inches='tight')
+    plt.close()
+
 # **Updated Evaluate Model Function**
 def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply_topo=False, multi_class=False):
     model.eval()
@@ -68,8 +94,10 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
 
     priors = get_priors(multi_class)
 
+    all_losses = []  # Track losses for all samples
+
     with torch.no_grad():
-        for images, masks in tqdm.tqdm(test_loader, total=len(test_loader)):
+        for i, (images, masks) in enumerate(tqdm.tqdm(test_loader, total=len(test_loader))):
             images, masks = images.to(device), masks.to(device)
             outputs = model(images)
 
@@ -105,19 +133,19 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
                     model.train()  # Set model to training mode for topological post-processing
                     print(f"Applying Persistent Homology Post-Processing with {'Multi-Class' if multi_class else 'Single-Class'} Priors...")
                     processed_outputs = []
-                    for i in range(images.shape[0]):  # Process each image separately
-                        input_single = images[i].unsqueeze(0)
-                        topo_model = multi_class_topological_post_processing(
+                    batch_losses = []
+                    
+                    for j in range(images.shape[0]):
+                        input_single = images[j].unsqueeze(0)
+                        topo_model, losses = multi_class_topological_post_processing(
                             input_single, model, priors, lr=1e-5, mse_lambda=1000,
                             num_its=100, thresh=0.5, parallel=False
                         )
                         refined_output = topo_model(input_single)
-                        refined_output_np = refined_output.detach().cpu().numpy()
-                        unique_values = np.unique(refined_output_np)
-                        print(f"Unique values in refined output: {unique_values}")
                         processed_outputs.append(refined_output)
+                        all_losses.append(losses)
 
-                outputs = torch.cat(processed_outputs, dim=0)
+                    outputs = torch.cat(processed_outputs, dim=0)
 
                 pred_probs = torch.softmax(outputs, dim=1)  # Updated predictions
                 pred_labels = torch.argmax(pred_probs, dim=1)  # Updated predictions
@@ -162,13 +190,19 @@ def evaluate_model(model, test_loader, device, criterion, apply_cca=False, apply
         'betti_error_percentiles': betti_percentiles,
         'topological_success_rate': mean_tsr,
         'std_topological_success_rate': std_tsr,
+        'all_losses': all_losses
     }
+
     return results
 
 # **Test Model**
 def test_model(model, test_loader, device, results_dir, save_visualizations, apply_cca, apply_topo, multi_class, description):
     criterion = torch.nn.CrossEntropyLoss()
     results = evaluate_model(model, test_loader, device, criterion, apply_cca, apply_topo, multi_class)
+    # Plot losses if topological post-processing was applied
+    all_losses = results['all_losses']
+    if apply_topo and all_losses:
+        plot_losses(all_losses, os.path.join(results_dir, f'loss_trends_{"multi" if multi_class else "single"}_class.png'))
 
     # Print results
     print("\n=== Test Results ===")
@@ -192,7 +226,8 @@ def test_model(model, test_loader, device, results_dir, save_visualizations, app
                 elif "betti_error" in key:
                     f.write(f"{key} (Ordered as [98th, 99th, 100th]): {value}\n")
             else:
-                f.write(f"{key}: {value}\n")
+                if key != 'all_losses':
+                    f.write(f"{key}: {value}\n")
 
     return results
 
