@@ -325,6 +325,7 @@ def main():
             print(f'Validation CE Loss: {val_ce_loss:.4f}')
             print(f'Mean Validation GDice: {val_gdice:.4f}')
             if args.use_topo_loss:
+                print(f'Lambda CE: {args.lambda_ce}')
                 print(f'Betti Error: {mean_betti_error}')
                 print(f'Topological Success: {mean_topo_success}')
             print('Per-class Hausdorff distances:')

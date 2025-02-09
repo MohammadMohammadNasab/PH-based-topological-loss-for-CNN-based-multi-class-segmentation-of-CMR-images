@@ -16,6 +16,8 @@ def trip_wrapper(X, D):
 
 def get_roi(X, thresh=0.01):
     true_points = torch.nonzero(X >= thresh)
+    if true_points.numel() == 0:
+        return None  # Return None if no points meet threshold
     corner1 = true_points.min(dim=0)[0]
     corner2 = true_points.max(dim=0)[0]
     roi = [slice(None, None)] + [slice(c1, c2 + 1) for c1, c2 in zip(corner1, corner2)]
@@ -72,8 +74,13 @@ def compute_topological_loss(output, prior, thresh=0.5, construction='0', parall
     # Get ROI for topological consideration
     if thresh:
         roi = get_roi(output[1:].sum(0).squeeze(), thresh)
+        if roi is None:
+            raise Exception('No foreground ROI found')
     else:
         roi = [slice(None, None)] + [slice(None, None) for _ in range(len(spatial_dims))]
+    
+    # Convert prior to tensor format
+    prior = {torch.tensor(c): torch.tensor(b) for c, b in prior.items()}
     
     # Build class/combination-wise (c-wise) image tensor for prior
     combos = torch.stack([output[roi][torch.tensor(c).T].sum(0) for c in prior.keys()])
@@ -102,8 +109,8 @@ def compute_topological_loss(output, prior, thresh=0.5, construction='0', parall
         for dim in range(len(spatial_dims)):
             bcodes[c, dim, :len(fin[dim])] = fin[dim]
     
-    # Convert prior values to tensors before stacking
-    stacked_prior = torch.stack([torch.tensor(b) for b in prior.values()])
+    # Convert prior values to tensors and handle feature matching
+    stacked_prior = torch.stack(list(prior.values()))
     stacked_prior.T[0] -= 1  # Since fundamental 0D component has infinite persistence
     matching = torch.zeros_like(bcodes).detach().bool()
     for c, combo in enumerate(stacked_prior):
@@ -138,6 +145,10 @@ def multi_class_topological_post_processing(
         num_its      - Iterable of number iterations(s) to run for each scale [100]
         construction - Either '0' (4 (2D) or 6 (3D) connectivity) or 'N' (8 (2D) or 26 (3D) connectivity) ['0']
         thresh       - Threshold at which to define the foreground ROI for topological post-processing
+    
+    Returns:
+        model_topo - Post-processed model
+        losses    - Dictionary containing lists of topo_loss and mse_loss values
     '''
     
     # Get image properties
@@ -168,6 +179,12 @@ def multi_class_topological_post_processing(
     
     # Set mode of cubical complex construction
     PH = {'0': crip_wrapper, 'N': trip_wrapper}
+
+    # Initialize loss tracking
+    losses = {
+        'topo_loss': [],
+        'mse_loss': []
+    }
 
     for it in range(num_its):
 
@@ -217,9 +234,14 @@ def multi_class_topological_post_processing(
         # Get similarity constraint
         mse = F.mse_loss(outputs, pred_unet)
 
+        # Track losses separately
+        topo_loss = A + Z
+        losses['topo_loss'].append(topo_loss.item())
+        losses['mse_loss'].append(mse.item())
+
         # Optimisation
-        loss = A + Z + mse_lambda * mse
+        loss = topo_loss + mse_lambda * mse
         loss.backward()
         optimiser.step()
 
-    return model_topo
+    return model_topo, losses
